@@ -1,0 +1,124 @@
+# RHEL GPU server. Nothing loads in-process: each capability is an HTTP
+# service, which is how vLLM is meant to run and how the reserved Qwen3.6
+# already runs. Bring the services up with `make rhel-up`.
+profile: cuda
+register: standard
+backend:
+  asr:
+    # MERaLiON is the real Singlish model and belongs here rather than on the
+    # Mac, where it managed 7 s an utterance. On vLLM it reports ~600 ms.
+    base_url: http://127.0.0.1:8801
+    model: MERaLiON/MERaLiON-3-3B-ASR
+  llm:
+    # The instance you already run. Voice needs its own replica or priority
+    # scheduling — a batch job landing mid-call is dead air to the customer.
+    base_url: http://127.0.0.1:8000
+    model: Qwen/Qwen3.6-35B-A3B
+    max_tokens: 220
+    temperature: 0.3
+  tts:
+    # Improvised lines only. Scripted turns come from the cache below and
+    # never reach this service.
+    #
+    # The sidecar loads the *multilingual* checkpoint and is sent a language
+    # with every request. The English-only class is not a substitute: it
+    # loads happily, ignores the language and reads Mandarin through the
+    # English phonemiser, which produces a file of plausible length that no
+    # part of the pipeline flags.
+    base_url: http://127.0.0.1:8802
+    model: chatterbox-multilingual-v3
+    prerender:
+      # Identical to the Mac profile on purpose: cache keys are
+      # platform-independent, so `make prerender` on a laptop produces wavs
+      # this server reuses byte-for-byte. Ship voices/cache with the deploy.
+      model: mlx-community/chatterbox-multilingual-v3
+      cache_dir: voices/cache
+      default_voice: male
+      params:
+        temperature: 0.5
+      voices:
+        # Same figures as the Mac profile, deliberately: the cache is keyed on
+        # them, so a mismatch would make every line rendered on one machine
+        # miss on the other.
+        male:
+          label: "Male"
+          note: "US · original"
+          ref_audio: voices/refs/male.wav
+          target_f0: 162
+        female:
+          label: "Female"
+          note: "US · original"
+          ref_audio: voices/refs/female.wav
+          # Cloning copies the reference speaker's delivery, and this one
+          # reads slowly: 156 words a minute against the male voice's 202.
+          # Neither cfg_weight nor exaggeration moves it and Chatterbox
+          # ignores `speed`, so it is corrected with the same
+          # pitch-preserving stretch the "speak slower" path uses.
+          #
+          # 1.25 measured ~190-200 wpm and was too fast on the line; 1.10
+          # lands around 170, between the two voices. Below 1.0 slows a voice
+          # down. It is in the cache key, so changing it re-renders that
+          # voice — pick a number rather than sweeping.
+          rate: 1.1
+          target_f0: 233
+        # Three more, generated from Kokoro's *named speaker* embeddings
+        # rather than cloned, then used as Chatterbox references. Kokoro holds
+        # a speaker by construction, so the clip itself is as steady as this
+        # stack gets — and each is 20-23 s against the original female clip's
+        # 7.6 s, which is the other half of why that one wandered.
+        #
+        # Pitch spread across the reference's own voiced frames, lower being
+        # steadier: female 9.7 semitones, isabella 6.4, bella 7.2, sarah 9.6.
+        # Sarah is no steadier than the voice it is offered beside; it is here
+        # because it was asked for, and the measurement is recorded so the
+        # choice is an informed one.
+        #
+        # target_f0 is measured from what the *clone* lands on over five
+        # scripted lines, not from the reference clip: setting it from the
+        # clip would drag every line toward a figure the clone never produces.
+        isabella:
+          label: "Isabella"
+          note: "UK · steady"
+          ref_audio: voices/refs/bf_isabella.wav
+          target_f0: 200
+        bella:
+          label: "Bella"
+          note: "US · warm"
+          ref_audio: voices/refs/af_bella.wav
+          target_f0: 209
+        sarah:
+          label: "Sarah"
+          note: "US · brighter"
+          ref_audio: voices/refs/af_sarah.wav
+          target_f0: 178
+
+        michael:
+          label: "Michael"
+          note: "US · deeper"
+          ref_audio: voices/refs/am_michael.wav
+          target_f0: 125
+
+        eric:
+          label: "Eric"
+          # 161 Hz against the original Male voice's 162 — the nearest match
+          # in the set, for keeping that character while gaining a reference
+          # clip nearly three times as long. Reads at 140 wpm against Male's
+          # 168; add `rate:` here if that is too deliberate on the line.
+          note: "US · like Male"
+          ref_audio: voices/refs/am_eric.wav
+          target_f0: 161
+
+languages: [en, zh]
+audio:
+  sample_rate: 16000
+
+# Same guardrail as the Mac profile: the model chooses a handler for replies
+# the keyword handlers do not recognise, and never writes a word the caller
+# hears. See docs/guardrail.md.
+#
+# Left implicit it would have defaulted to a 1500 ms timeout here — tighter
+# than the Mac's 2500 ms, on a box where the LLM is shared with whatever else
+# runs on it. Explicit, and matching, so the two deployments behave the same.
+guardrail:
+  enabled: true
+  timeout_ms: 2500

@@ -1,0 +1,84 @@
+# Tiq renewal voicebot — GPU deployment.
+#
+#   docker compose up -d            everything
+#   docker compose up -d console    console only, against services already running
+#
+# The LLM is deliberately absent: Qwen3.6 already runs on this box and voice
+# should point at a dedicated replica or a priority-scheduled queue. A batch
+# job landing mid-call is dead air to the customer. Set LLM_URL to reach it.
+#
+# Podman: `podman compose up -d` works, or `podman-compose`. Swap the
+# deploy.resources GPU block for `devices: ["nvidia.com/gpu=all"]` if your
+# podman uses CDI rather than the nvidia runtime.
+
+x-gpu: &gpu
+  deploy:
+    resources:
+      reservations:
+        devices:
+          - driver: nvidia
+            count: all
+            capabilities: [gpu]
+
+services:
+  asr:
+    # MERaLiON is the only model here trained on Singlish, and vLLM is where it
+    # is fast — ~600 ms against the ~7 s it managed on Apple Silicon.
+    image: vllm/vllm-openai:latest
+    container_name: voicebot-asr
+    <<: *gpu
+    command: >
+      --model MERaLiON/MERaLiON-3-3B-ASR
+      --port 8801
+      --max-model-len 8192
+      --gpu-memory-utilization 0.22
+      --trust-remote-code
+    volumes:
+      # :z so SELinux lets the container read the shared model cache.
+      - ${HF_HOME:-~/.cache/huggingface}:/root/.cache/huggingface:z
+    ports: ["127.0.0.1:8801:8801"]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8801/v1/models || exit 1"]
+      interval: 30s
+      timeout: 5s
+      start_period: 300s      # first run downloads and loads ~6 GB
+      retries: 3
+
+  tts:
+    build:
+      context: .
+      dockerfile: Dockerfile.tts
+    image: voicebot-tts:latest
+    container_name: voicebot-tts
+    <<: *gpu
+    volumes:
+      - ./voices:/app/voices:z
+      - ${HF_HOME:-~/.cache/huggingface}:/root/.cache/huggingface:z
+    ports: ["127.0.0.1:8802:8802"]
+    restart: unless-stopped
+
+  console:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: voicebot-console:latest
+    container_name: voicebot-console
+    environment:
+      VOICEBOT_PROFILE: rhel
+      VOICEBOT_ASR_URL: http://asr:8801
+      VOICEBOT_TTS_URL: http://tts:8802
+      # Point at the Qwen3.6 replica reserved for voice. host.docker.internal
+      # works on Docker Desktop; on Linux use the host IP or an external name.
+      VOICEBOT_LLM_URL: ${LLM_URL:-http://host.docker.internal:8000}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      # The pre-rendered cache is data, not code: mounted so it can be
+      # regenerated without rebuilding, and shared with the TTS sidecar.
+      - ./voices:/app/voices:z
+    ports: ["8788:8788"]
+    depends_on:
+      asr:
+        condition: service_healthy
+    restart: unless-stopped

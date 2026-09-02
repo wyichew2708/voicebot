@@ -1,0 +1,136 @@
+# Mac profile using Polyglot-Lion for ASR — the fast Singapore-tuned option.
+#
+# Polyglot-Lion is Qwen3-ASR fine-tuned on Singapore's four official languages
+# (English, Mandarin, Malay, Tamil). mlx-audio supports the qwen3_asr family
+# natively, and the authors publish MLX builds, so this needs no porting and
+# no sidecar.
+#
+# Measured on this machine, warm: 0.16-0.27 s per utterance, against ~1.5 s for
+# Whisper turbo and ~7 s for MERaLiON on the PyTorch/MPS path.
+#
+# Accuracy on real Singaporean speech is still unmeasured — see README.
+profile: mlx
+backend:
+  llm:
+    # 23 GB on disk, ~3B active parameters per token. Loaded once at startup
+    # for the guardrail; it is not in the 40 GB budget because the same model
+    # is already resident on the GPU server this ships to.
+    model: mlx-community/Qwen3.6-35B-A3B-OptiQ-4bit
+    max_tokens: 220
+  asr:
+    model: knoveleng/polyglot-lion-1.7b-v1.5-mlx-8bit
+    # No processor override needed: this repo ships its own tokenizer.
+    # No initial_prompt: qwen3_asr does not take one, and the backend falls
+    # back cleanly if it is set.
+  tts:
+    # Live voice: improvised lines only, where 200 ms matters.
+    model: mlx-community/Kokoro-82M-4bit
+    # Scripted turns are rendered once by a better model and played from disk.
+    # Qwen3-TTS VoiceDesign takes ~1.4 s a line — irrelevant at build time, and
+    # unlike any preset voice it can be *directed* toward a Singaporean accent.
+    # Apache 2.0, so unlike Breeze the output is commercially usable.
+    prerender:
+      # Chatterbox multilingual, cloning two fixed reference clips.
+      #
+      # Cloning is anchored to a file rather than sampled per call, which is
+      # what VoiceDesign got wrong. It is still less steady than a named
+      # CustomVoice speaker — measured drift across three lines is ~62 Hz here
+      # against 49 Hz for Qwen3-TTS/aiden — and it does not reproduce the
+      # reference exactly: it lifted the male from 139 Hz to roughly 205 Hz.
+      # Chosen for naturalness with that trade understood.
+      model: mlx-community/chatterbox-multilingual-v3
+      cache_dir: voices/cache
+      default_voice: male
+      params:
+        # Lower sampling temperature measurably reduced drift (84 Hz -> 62 Hz).
+        temperature: 0.5
+      voices:
+        # Cloning re-derives the speaker per line, so pitch wanders: measured
+        # across one call the male voice ran 147-193 Hz, close to four
+        # semitones, and reads as the speaker changing mid-conversation. Every
+        # rendered line is normalised to the figure below. These are each
+        # voice's own established median, so the character does not change —
+        # only the drift around it goes away.
+        male:
+          label: "Male"
+          note: "US · original"
+          ref_audio: voices/refs/male.wav      # Qwen3-TTS "aiden"
+          target_f0: 162
+        female:
+          label: "Female"
+          note: "US · original"
+          ref_audio: voices/refs/female.wav
+          # Cloning copies the reference speaker's delivery, and this one
+          # reads slowly: 156 words a minute against the male voice's 202.
+          # Neither cfg_weight nor exaggeration moves it and Chatterbox
+          # ignores `speed`, so it is corrected with the same
+          # pitch-preserving stretch the "speak slower" path uses.
+          #
+          # 1.25 measured ~190-200 wpm and was too fast on the line; 1.10
+          # lands around 170, between the two voices. Below 1.0 slows a voice
+          # down. It is in the cache key, so changing it re-renders that
+          # voice — pick a number rather than sweeping.
+          rate: 1.1    # Qwen3-TTS "vivian"
+          target_f0: 233
+
+        # Three more, generated from Kokoro's *named speaker* embeddings
+        # rather than cloned, then used as Chatterbox references. Kokoro holds
+        # a speaker by construction, so the clip itself is as steady as this
+        # stack gets — and each is 20-23 s against the original female clip's
+        # 7.6 s, which is the other half of why that one wandered.
+        #
+        # Pitch spread across the reference's own voiced frames, lower being
+        # steadier: female 9.7 semitones, isabella 6.4, bella 7.2, sarah 9.6.
+        # Sarah is no steadier than the voice it is offered beside; it is here
+        # because it was asked for, and the measurement is recorded so the
+        # choice is an informed one.
+        #
+        # target_f0 is measured from what the *clone* lands on over five
+        # scripted lines, not from the reference clip: setting it from the
+        # clip would drag every line toward a figure the clone never produces.
+        isabella:
+          label: "Isabella"
+          note: "UK · steady"
+          ref_audio: voices/refs/bf_isabella.wav
+          target_f0: 200
+        bella:
+          label: "Bella"
+          note: "US · warm"
+          ref_audio: voices/refs/af_bella.wav
+          target_f0: 209
+        sarah:
+          label: "Sarah"
+          note: "US · brighter"
+          ref_audio: voices/refs/af_sarah.wav
+          target_f0: 178
+
+        michael:
+          label: "Michael"
+          note: "US · deeper"
+          ref_audio: voices/refs/am_michael.wav
+          target_f0: 125
+
+        eric:
+          label: "Eric"
+          # 161 Hz against the original Male voice's 162 — the nearest match
+          # in the set, for keeping that character while gaining a reference
+          # clip nearly three times as long. Reads at 140 wpm against Male's
+          # 168; add `rate:` here if that is too deliberate on the line.
+          note: "US · like Male"
+          ref_audio: voices/refs/am_eric.wav
+          target_f0: 161
+
+languages: [en, zh]
+audio:
+  sample_rate: 16000
+
+# The model chooses a handler for replies the keyword handlers do not
+# recognise; it never writes a word the caller hears. See docs/guardrail.md.
+#
+# It runs on one turn in a call at most, so the cost is a rounding error next
+# to the pre-rendered path — but the caller is waiting through it, hence the
+# timeout. Past it, the call falls back to the behaviour it had before this
+# existed.
+guardrail:
+  enabled: true
+  timeout_ms: 2500

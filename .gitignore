@@ -1,0 +1,24 @@
+.venv*/
+__pycache__/
+*.pyc
+.pytest_cache/
+models/
+*.log
+voices/cache/
+
+# Voices an admin recorded in the console. Someone's voice is not a source
+# artefact, and a pull request is not where it belongs.
+voices/custom.json
+voices/refs/*.wav
+# The shipped voices are deployment assets, not somebody's recording.
+!voices/refs/male.wav
+!voices/refs/female.wav
+!voices/refs/bf_isabella.wav
+!voices/refs/af_bella.wav
+!voices/refs/af_sarah.wav
+!voices/refs/am_michael.wav
+!voices/refs/am_eric.wav
+
+# Service logs. The call transcripts in logs/calls.jsonl are the eval
+# corpus and are versioned; the noisy stdout/stderr of the service is not.
+logs/*.log

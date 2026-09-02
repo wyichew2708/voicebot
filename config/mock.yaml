@@ -1,0 +1,7 @@
+# Runs with no models at all. Use this for UI work and state-machine development.
+profile: mock
+backend:
+  latency_ms: [520, 760]   # simulated voice-to-voice range
+languages: [en, zh]
+audio:
+  sample_rate: 16000

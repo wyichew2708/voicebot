@@ -1,0 +1,21 @@
+# TTS sidecar. Only improvised lines reach this — the seven scripted turns are
+# served from the pre-rendered cache — so it is on the critical path for
+# unscripted replies only.
+FROM nvidia/cuda:12.4.0-runtime-ubi9
+
+RUN dnf install -y python3.11 python3.11-pip && dnf clean all
+WORKDIR /app
+ENV PYTHONUNBUFFERED=1
+
+RUN python3.11 -m pip install --no-cache-dir \
+      torch torchaudio chatterbox-tts fastapi "uvicorn[standard]" numpy
+
+COPY scripts/tts_sidecar.py ./scripts/
+VOLUME ["/app/voices"]
+
+EXPOSE 8802
+HEALTHCHECK --interval=30s --timeout=5s --start-period=300s --retries=3 \
+  CMD python3.11 -c "import urllib.request,sys; \
+      sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8802/health',timeout=4).status==200 else 1)"
+
+CMD ["python3.11", "scripts/tts_sidecar.py", "--host", "0.0.0.0", "--port", "8802"]

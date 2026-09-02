@@ -1,0 +1,1789 @@
+<meta charset="utf-8">
+<title>Tiq Renewal Console</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap">
+
+<style>
+  :root {
+    --ground:#EFF3F4; --surface:#FFFFFF; --surface-2:#E6ECEE; --surface-3:#DBE3E6;
+    --ink:#0C1418; --ink-2:#3E4D57; --muted:#697883;
+    --line:#D2DBDF; --line-strong:#A9B7BE;
+    --accent:#0B6E78; --accent-2:#0E8F9C; --accent-soft:#D3EAED;
+    --pass:#237049; --pass-soft:#D5E9DE;
+    --hold:#8A6212; --hold-soft:#F5E9CE;
+    --block:#A5432A; --block-soft:#F5DFD7;
+    --agent:#0B6E78; --cust:#5B4A8A; --cust-soft:#E5DFF1;
+    --shadow:0 1px 2px rgba(12,20,24,.06), 0 10px 26px -18px rgba(12,20,24,.3);
+    --f-ui:"Archivo","Helvetica Neue",Arial,sans-serif;
+    --f-mono:"JetBrains Mono",ui-monospace,"SF Mono",Menlo,monospace;
+    --ic-play:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M8 5v14l11-7z'/></svg>");
+    --ic-mic:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.9V21h2v-3.1A7 7 0 0 0 19 11z'/></svg>");
+    --ic-off:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M3.3 2 2 3.3l6 6V11a3 3 0 0 0 4.5 2.6l1.4 1.4A5 5 0 0 1 7 11H5a7 7 0 0 0 6 6.9V21h2v-3.1a7 7 0 0 0 3.2-1.3l3.5 3.5 1.3-1.3zM15 11V5a3 3 0 0 0-5.9-.7l5.8 5.8z'/></svg>");
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground:#080D10; --surface:#101A1F; --surface-2:#16232A; --surface-3:#1E2E36;
+      --ink:#EAF1F4; --ink-2:#AEBFC8; --muted:#7C8D99;
+      --line:#20303A; --line-strong:#344B55;
+      --accent:#46C2CE; --accent-2:#72D9E2; --accent-soft:#0D3138;
+      --pass:#5CB98C; --pass-soft:#123020;
+      --hold:#D9AE55; --hold-soft:#332711;
+      --block:#E88569; --block-soft:#38211A;
+      --agent:#46C2CE; --cust:#AC9AD9; --cust-soft:#241E33;
+      --shadow:0 1px 2px rgba(0,0,0,.5), 0 10px 26px -18px rgba(0,0,0,.9);
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground:#080D10; --surface:#101A1F; --surface-2:#16232A; --surface-3:#1E2E36;
+    --ink:#EAF1F4; --ink-2:#AEBFC8; --muted:#7C8D99;
+    --line:#20303A; --line-strong:#344B55;
+    --accent:#46C2CE; --accent-2:#72D9E2; --accent-soft:#0D3138;
+    --pass:#5CB98C; --pass-soft:#123020;
+    --hold:#D9AE55; --hold-soft:#332711;
+    --block:#E88569; --block-soft:#38211A;
+    --agent:#46C2CE; --cust:#AC9AD9; --cust-soft:#241E33;
+    --shadow:0 1px 2px rgba(0,0,0,.5), 0 10px 26px -18px rgba(0,0,0,.9);
+  }
+
+  * { box-sizing: border-box; }
+  body { background: var(--ground); color: var(--ink); font-family: var(--f-ui);
+         margin: 0; font-size: 15px; line-height: 1.5; height: 100dvh; overflow: hidden;
+         -webkit-font-smoothing: antialiased; }
+  button { font: inherit; color: inherit; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+  [hidden] { display: none !important; }
+
+  .app { display: grid; grid-template-columns: 224px minmax(0,1fr) 326px;
+         gap: 10px; padding: 10px; height: 100dvh; overflow: hidden; }
+  .col { display: flex; flex-direction: column; gap: 8px; min-height: 0; min-width: 0; }
+  /* Nothing here scrolls at a normal window height, because a toggle hidden
+     below a fold is a toggle nobody uses. That is why the voice picker
+     collapses to the one in use and the register comparison is behind a
+     disclosure: compacting first, always.
+     Explanations that are only true sometimes are shown only then: the voice
+     hint appears when a voice is cold, not to congratulate you when it is
+     warm, and the microphone guidance is a tooltip on the control it
+     describes. */
+  .col.controls { overflow: hidden; }
+  .col.controls .panel, .col.controls .actions { flex: none; }
+  /* One panel gives, so the controls never can. The policyholder record is
+     reference material — the only thing here that can lose its bottom few
+     lines without costing anyone a control — so it takes up the slack at any
+     window height rather than pushing "Run a scripted call" off the screen. */
+  #policyPanel { flex: 0 1 auto; min-height: 68px; display: flex;
+                 flex-direction: column; }
+  #policyPanel .pbody { overflow-y: auto; min-height: 0; }
+
+  .panel { background: var(--surface); border: 1px solid var(--line); border-radius: 11px;
+           box-shadow: var(--shadow); overflow: hidden; display: flex;
+           flex-direction: column; min-height: 0; flex: 0 0 auto; }
+  .panel.grow { flex: 1 1 auto; }
+
+  /* Voice studio ---------------------------------------------------------- */
+  /* Voice picker. Six voices do not fit a button strip in a 150px column,
+     and a name alone is not enough to choose between them — the accent, the
+     pitch and whether it is ready to speak all matter. */
+  .vpick { display: flex; flex-direction: column; gap: 4px; }
+  /* Seven voices is more than a 224px column has room for, and the column
+     does not scroll on purpose — a control below a fold is a control nobody
+     finds. Collapsed to the one in use; the rest are one press away. */
+  .vpick.collapsed .vrow[aria-checked="false"] { display: none; }
+  .vmore { margin-top: 5px; width: 100%; padding: 5px 8px; border-radius: 6px;
+           cursor: pointer; font: 500 10px/1 var(--f-mono); letter-spacing: .08em;
+           text-transform: uppercase; border: 1px dashed var(--line-strong);
+           background: transparent; color: var(--muted); }
+  .vmore:hover { border-color: var(--accent); color: var(--accent); }
+  .vrow { display: flex; align-items: center; gap: 8px; padding: 7px 9px;
+          border: 1px solid var(--line); border-radius: 8px; cursor: pointer;
+          background: var(--surface); text-align: left; width: 100%; }
+  .vrow:hover { border-color: var(--accent); }
+  .vrow[aria-checked="true"] { border-color: var(--accent);
+                               background: var(--accent-soft); }
+  .vrow[disabled] { opacity: .5; cursor: not-allowed; }
+  .vrow .vlab { flex: 1 1 auto; min-width: 0; }
+  .vrow .vnm { display: block; font: 600 12px/1.25 var(--f-ui); color: var(--ink);
+               overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .vrow .vsub { display: block; font: 400 10px/1.3 var(--f-mono); color: var(--muted);
+                overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* Warm or cold is the difference between a line arriving in a millisecond
+     and the caller waiting three seconds for it, so it is on the row. */
+  .vdot { width: 6px; height: 6px; border-radius: 50%; background: var(--hold);
+          flex: none; }
+  .vdot.warm { background: var(--pass); }
+  .vdot.nearly { background: var(--pass); opacity: .45; }
+  .vplay { flex: none; width: 22px; height: 22px; border-radius: 50%; cursor: pointer;
+           border: 1px solid var(--line-strong); background: var(--surface-2);
+           background-image: var(--ic-play); background-size: 12px 12px;
+           background-position: 55% 50%; background-repeat: no-repeat; }
+  .vplay:hover { border-color: var(--accent); }
+  .vpickhint { margin-top: 6px; font-size: 10.5px; line-height: 1.45; color: var(--muted); }
+  /* A cold voice is the single biggest latency cliff in the console — 13.6 s
+     on a turn that reads from a warm cache in 5 ms. It gets a warning, not a
+     grey footnote. */
+  .vpickhint.cold { color: var(--hold); background: var(--hold-soft);
+                    border-radius: 6px; padding: 6px 8px; margin-top: 7px; }
+  .vpickhint button { display: block; margin-top: 5px; font: 600 10px/1 var(--f-ui);
+                      letter-spacing: .06em; text-transform: uppercase;
+                      padding: 5px 8px; border-radius: 6px; cursor: pointer;
+                      border: 1px solid var(--hold); background: transparent;
+                      color: var(--hold); }
+  .vpickhint button:hover { background: var(--hold); color: var(--surface); }
+  .michint { margin-top: 5px; font-size: 10px; line-height: 1.4; color: var(--muted); }
+  .vsnote { margin: 0 0 12px; font-size: 11.5px; line-height: 1.5; color: var(--muted); }
+  .vsnote b { color: var(--ink-2); }
+  .vstips { margin: 0 0 12px; padding-left: 1.1em; font-size: 11.5px; line-height: 1.55;
+            color: var(--muted); display: flex; flex-direction: column; gap: 4px; }
+  .vstips b { color: var(--ink-2); }
+  .vsgauge { margin-top: 8px; font-size: 10.5px; line-height: 1.4; color: var(--muted); }
+  .vsgauge .vsbar { margin-bottom: 4px; }
+  .vsgauge.ready { color: var(--pass); }
+  .vsgauge.ready .vsbar i { background: var(--pass); }
+  .vsrec { display: flex; align-items: center; gap: 10px; }
+  .vsbtn { font: 600 11px/1 var(--f-ui); letter-spacing: .06em; text-transform: uppercase;
+           padding: 9px 13px; border-radius: 7px; cursor: pointer;
+           border: 1px solid var(--line-strong); background: var(--surface-2);
+           color: var(--ink); white-space: nowrap; }
+  .vsbtn:hover { border-color: var(--accent); }
+  .vsbtn.go { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .vsbtn.rec { background: var(--block); border-color: var(--block); color: #fff; }
+  .vsbtn.ghost { background: transparent; color: var(--muted); }
+  .vsbtn[disabled] { opacity: .45; cursor: not-allowed; }
+  /* The meter is the only feedback that the right microphone is live, so it
+     also shows the floor the clip has to clear to be usable. */
+  .vsmeter { flex: 1 1 auto; height: 6px; border-radius: 3px; background: var(--surface-3);
+             position: relative; overflow: hidden; }
+  .vsmeter i { display: block; height: 100%; width: 0; background: var(--accent);
+               transition: width .06s linear; }
+  .vsmeter.low i { background: var(--hold); }
+  .vstime { font: 600 11px/1 var(--f-mono); color: var(--ink-2); min-width: 42px;
+            text-align: right; font-variant-numeric: tabular-nums; }
+  .vsprompt { margin: 0 0 12px; padding: 10px 11px; border-radius: 7px;
+              background: var(--surface-2); border: 1px solid var(--line);
+              font-size: 12px; line-height: 1.55; color: var(--ink-2); }
+  .vssave { margin-top: 12px; display: flex; flex-direction: column; gap: 9px; }
+  .vssave audio { width: 100%; height: 32px; }
+  .vsrow { display: flex; gap: 7px; flex-wrap: wrap; }
+  .vsrow input { flex: 1 0 100%; }
+  .vsrow input { flex: 1 1 auto; min-width: 0; font: 400 12px/1 var(--f-ui);
+                 padding: 9px 10px; border-radius: 7px; background: var(--surface-2);
+                 border: 1px solid var(--line-strong); color: var(--ink); }
+  .vserr { margin: 10px 0 0; padding: 8px 10px; border-radius: 7px; font-size: 11.5px;
+           line-height: 1.5; background: var(--block-soft); color: var(--block); }
+  .vslist { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+  .vsvoice { border: 1px solid var(--line); border-radius: 8px; padding: 10px 11px;
+             background: var(--surface-2); display: flex; flex-direction: column; gap: 8px; }
+  .vsvoice .vh { display: flex; align-items: baseline; gap: 8px; }
+  .vsvoice .vn { font: 600 12.5px/1.2 var(--f-ui); color: var(--ink); flex: 1 1 auto;
+                 overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .vsvoice .vm { font: 500 10.5px/1 var(--f-mono); color: var(--muted);
+                 font-variant-numeric: tabular-nums; }
+  .vspitch { display: flex; align-items: center; gap: 8px; }
+  .vspitch label { font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase;
+                   color: var(--muted); }
+  .vspitch input { flex: 1 1 auto; min-width: 0; accent-color: var(--accent); }
+  .vsacts { display: flex; gap: 6px; flex-wrap: wrap; }
+  .vsacts .vsbtn { padding: 6px 9px; font-size: 10px; }
+  .vswarm { font-size: 11px; line-height: 1.45; color: var(--muted); }
+  .vsbar { height: 5px; border-radius: 3px; background: var(--surface-3); overflow: hidden; }
+  .vsbar i { display: block; height: 100%; width: 0; background: var(--pass);
+             transition: width .3s ease; }
+  .vswarm.cold { color: var(--hold); }
+
+  .phead { padding: 7px 12px; border-bottom: 1px solid var(--line);
+           background: var(--surface-2); display: flex; align-items: center;
+           justify-content: space-between; gap: 10px; flex: none; }
+  .ptitle { font-size: 10.5px; font-weight: 700; letter-spacing: .13em;
+            text-transform: uppercase; color: var(--muted); }
+  .pbody { padding: 10px 12px; }
+
+  /* ---------- brand + live backend status (read-only) ---------- */
+  .brand { padding: 2px 2px 0; flex: none; }
+  .bname { font-size: 16px; font-weight: 700; letter-spacing: -.015em; }
+  .bsub { font-family: var(--f-mono); font-size: 10.5px; color: var(--muted); letter-spacing: .05em; }
+
+  /* Truncates rather than pushing the call state onto a second line. Full
+     text is in the title attribute. */
+  .backend-info { display: flex; align-items: center; gap: 7px; margin-left: 14px;
+                  font-family: var(--f-mono); font-size: 10px; color: var(--muted);
+                  flex: 1 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; }
+  .backend-info > span:not(.bi-key) { overflow: hidden; text-overflow: ellipsis; }
+  .bi-key { font-weight: 700; letter-spacing: .09em; padding: 2px 6px; border-radius: 4px;
+            background: var(--surface-3); color: var(--muted); flex: none; }
+  .bi-key.on { background: var(--pass-soft); color: var(--pass); }
+  .bi-key.off { background: var(--block-soft); color: var(--block); }
+  .bi-sep { opacity: .4; }
+
+  /* ---------- segmented controls ---------- */
+  .seg { display: flex; gap: 4px; background: var(--surface-2); border: 1px solid var(--line);
+         border-radius: 9px; padding: 3px; }
+  .seg button { flex: 1; border: none; background: none; cursor: pointer;
+                font-family: var(--f-mono); font-size: 10.5px; font-weight: 700;
+                letter-spacing: .05em; padding: 7px 4px; border-radius: 6px;
+                color: var(--muted); transition: .15s; }
+  .seg button[aria-pressed="true"] { background: var(--accent); color: #fff; }
+  :root[data-theme="dark"] .seg button[aria-pressed="true"],
+  :root:not([data-theme="light"]) .seg button[aria-pressed="true"] { color: #06181C; }
+  .seg button:disabled { opacity: .4; cursor: not-allowed; }
+  .fieldlab { font-family: var(--f-mono); font-size: 9.5px; letter-spacing: .11em;
+              text-transform: uppercase; color: var(--muted); margin-bottom: 5px; display: block; }
+  .field { margin-bottom: 9px; }
+  /* Shows the register actually changing the wording. Without it an operator
+     who only runs one setting cannot tell the switch does anything. */
+  .preview { margin-top: 6px; font-size: 10px; line-height: 1.35; color: var(--muted);
+             background: var(--surface-2); border: 1px solid var(--line);
+             border-radius: 7px; padding: 6px 8px;
+             max-height: 84px; overflow-y: auto; }
+  .preview b { display: block; font-family: var(--f-mono); font-size: 8.5px;
+               letter-spacing: .09em; text-transform: uppercase; margin-bottom: 2px; }
+  .preview .on { color: var(--accent); }
+  .preview .off { opacity: .55; }
+  .field:last-child { margin-bottom: 0; }
+
+  select { width: 100%; font: inherit; font-size: 12.5px; padding: 7px 9px;
+           border-radius: 8px; border: 1px solid var(--line);
+           background: var(--surface); color: var(--ink); }
+
+  .persona { display: grid; grid-template-columns: auto 1fr; gap: 1px 10px; font-size: 11px; }
+  .persona dt { font-family: var(--f-mono); font-size: 9.5px; letter-spacing: .07em;
+                text-transform: uppercase; color: var(--muted); padding-top: 2px; }
+  .persona dd { margin: 0; color: var(--ink-2); }
+  .synthetic { margin-top: 6px; font-family: var(--f-mono); font-size: 9px; letter-spacing: .04em;
+               text-transform: uppercase; color: var(--hold); background: var(--hold-soft);
+               border: 1px dashed var(--hold); border-radius: 5px; padding: 3px 5px;
+               text-align: center; white-space: nowrap; overflow: hidden;
+               text-overflow: ellipsis; }
+
+  .actions { display: grid; gap: 7px; flex: none; }
+  .actions .btn { padding: 10px 8px; font-size: 12.5px; }
+  .btn { width: 100%; cursor: pointer; border: none; border-radius: 9px; padding: 11px;
+         font-size: 13.5px; font-weight: 700; letter-spacing: .02em; transition: .15s; }
+  .btn.primary { background: var(--accent); color: #fff; }
+  :root[data-theme="dark"] .btn.primary,
+  :root:not([data-theme="light"]) .btn.primary { color: #06181C; }
+  .btn.primary:hover { background: var(--accent-2); }
+  .btn.ghost { background: var(--surface); border: 1px solid var(--line-strong); color: var(--ink); }
+  .btn.ghost:hover { border-color: var(--accent); color: var(--accent); }
+  .btn.stop { background: var(--block); color: #fff; }
+  .btn:disabled { opacity: .45; cursor: not-allowed; }
+
+  /* ---------- centre stage ---------- */
+  .stage { align-items: stretch; }
+  .callbar { display: flex; align-items: center; gap: 12px; padding: 10px 16px;
+             flex: none; min-height: 44px; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); flex: none; }
+  .dot.live { background: var(--block); }
+  @media (prefers-reduced-motion: no-preference) {
+    .dot.live { animation: pulse 1.4s ease-in-out infinite; }
+  }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.35} }
+  .cstate { font-size: 14px; font-weight: 600; flex: none; white-space: nowrap;
+            line-height: 1.2; }
+  .ctimer { font-family: var(--f-mono); font-size: 15px; color: var(--ink-2);
+            font-variant-numeric: tabular-nums; margin-left: auto; flex: none;
+            line-height: 1.2; }
+
+  /* the waveform is the centrepiece — give it room */
+  .wave-panel { flex: 1 1 auto; display: flex; flex-direction: column;
+                justify-content: center; align-items: center; gap: 12px;
+                padding: 14px 20px; min-height: 0; }
+  canvas { width: 100%; height: 100%; display: block; }
+  .wave-hold { width: 100%; flex: 1 1 auto; min-height: 90px; }
+  .whom { display: flex; gap: 22px; font-family: var(--f-mono); font-size: 10px;
+          letter-spacing: .1em; text-transform: uppercase; color: var(--muted); flex: none; }
+  .whom span { display: flex; align-items: center; gap: 7px; }
+  .whom i { width: 12px; height: 3px; border-radius: 2px; }
+  .whom span.act { color: var(--ink); font-weight: 700; }
+
+  .bignum { display: flex; align-items: baseline; gap: 22px; flex: none; }
+  .stat { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+  .stat b { font-family: var(--f-mono); font-size: 26px; font-weight: 700;
+            letter-spacing: -.03em; font-variant-numeric: tabular-nums; color: var(--accent); }
+  .stat span { font-family: var(--f-mono); font-size: 9.5px; letter-spacing: .1em;
+               text-transform: uppercase; color: var(--muted); }
+
+  /* script rail + gates, side by side under the wave */
+  .under { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; flex: none; }
+  .rail { display: flex; flex-direction: column; gap: 1px; }
+  .step { display: grid; grid-template-columns: 19px 1fr; gap: 8px; align-items: center;
+          padding: 3px 4px; border-radius: 5px; font-size: 11.5px; transition: .2s; }
+  .step-i { font-family: var(--f-mono); font-size: 8.5px; font-weight: 700; width: 17px;
+            height: 17px; border-radius: 5px; display: grid; place-items: center;
+            background: var(--surface-3); color: var(--muted); }
+  .step-t { color: var(--muted); line-height: 1.25; }
+  .step.done .step-i { background: var(--pass-soft); color: var(--pass); }
+  .step.done .step-t { color: var(--ink-2); }
+  .step.active { background: var(--accent-soft); }
+  .step.active .step-i { background: var(--accent); color: #fff; }
+  :root[data-theme="dark"] .step.active .step-i,
+  :root:not([data-theme="light"]) .step.active .step-i { color: #06181C; }
+  .step.active .step-t { color: var(--ink); font-weight: 600; }
+  .step.skip .step-i { background: var(--block-soft); color: var(--block); }
+  .step.skip .step-t { color: var(--block); text-decoration: line-through; }
+
+  .gates { display: flex; flex-direction: column; gap: 5px; }
+  .gate { display: grid; grid-template-columns: 15px 1fr auto; gap: 8px;
+          align-items: center; font-size: 11.5px; }
+  .gate-ic { width: 15px; height: 15px; border-radius: 4px; display: grid; place-items: center;
+             font-family: var(--f-mono); font-size: 9px; font-weight: 700;
+             background: var(--surface-3); color: var(--muted); }
+  .gate-l { color: var(--ink-2); }
+  .gate-s { font-family: var(--f-mono); font-size: 9px; font-weight: 700; letter-spacing: .06em;
+            text-transform: uppercase; color: var(--muted); }
+  .gate.pass .gate-ic { background: var(--pass-soft); color: var(--pass); }
+  .gate.pass .gate-s { color: var(--pass); }
+  .gate.block .gate-ic { background: var(--block-soft); color: var(--block); }
+  .gate.block .gate-s, .gate.block .gate-l { color: var(--block); font-weight: 600; }
+
+  /* ---------- transcript column ---------- */
+  .tx { padding: 10px 14px; overflow-y: auto; flex: 1 1 auto; min-height: 0;
+        display: flex; flex-direction: column; gap: 9px; }
+  .callsep { display: flex; align-items: center; gap: 9px; margin: 6px 0 2px; flex: none; }
+  .callsep::before, .callsep::after { content: ""; height: 1px; background: var(--line); flex: 1; }
+  .callsep span { font-family: var(--f-mono); font-size: 9px; letter-spacing: .09em;
+                  text-transform: uppercase; color: var(--muted); white-space: nowrap; }
+  .msg { display: flex; flex-direction: column; gap: 3px; max-width: 94%; }
+  .msg.agent { align-self: flex-start; }
+  .msg.cust { align-self: flex-end; align-items: flex-end; }
+  .mmeta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .who { font-family: var(--f-mono); font-size: 9px; font-weight: 700; letter-spacing: .09em;
+         text-transform: uppercase; }
+  .msg.agent .who { color: var(--agent); }
+  .msg.cust .who { color: var(--cust); }
+  .lang { font-family: var(--f-mono); font-size: 8.5px; font-weight: 700; letter-spacing: .07em;
+          padding: 1px 5px; border-radius: 4px; background: var(--surface-3); color: var(--ink-2); }
+  .lang.zh { background: var(--cust-soft); color: var(--cust); }
+  .lang.sg { background: var(--hold-soft); color: var(--hold); }
+  .src { font-family: var(--f-mono); font-size: 8.5px; color: var(--muted); }
+  .bub { padding: 8px 11px; border-radius: 10px; font-size: 13px; line-height: 1.45;
+         border: 1px solid var(--line); }
+  .msg.agent .bub { background: var(--surface-2); border-bottom-left-radius: 3px; }
+  .msg.cust .bub { background: var(--cust-soft); border-bottom-right-radius: 3px; }
+  .sys { align-self: center; max-width: 96%; text-align: center; font-family: var(--f-mono);
+         font-size: 9.5px; line-height: 1.4; padding: 6px 9px; border-radius: 6px;
+         background: var(--block-soft); color: var(--block); border: 1px dashed var(--block); }
+  .sys.ok { background: var(--pass-soft); color: var(--pass); border-color: var(--pass); }
+  /* A handoff is the one event an operator has to act on, so it does not
+     look like the running commentary around it. */
+  .handoff { align-self: stretch; margin: 4px 0; padding: 9px 11px; border-radius: 8px;
+             background: var(--accent-soft); border: 1px solid var(--accent);
+             color: var(--text); }
+  .handoff .hh { font-family: var(--f-mono); font-size: 9px; letter-spacing: .09em;
+                 text-transform: uppercase; color: var(--accent); margin-bottom: 4px; }
+  .handoff .hs { font-size: 11.5px; line-height: 1.45; }
+  .handoff .ho { font-size: 10.5px; color: var(--muted); margin-top: 4px; }
+  .tool { font-family: var(--f-mono); font-size: 9px; color: var(--muted); align-self: center; }
+  .tool b { color: var(--accent); }
+  .empty { color: var(--muted); font-size: 12.5px; text-align: center; padding: 30px 16px; }
+
+  /* One round control under the waveform, as in any voice app: it starts the
+     call, then becomes the mute toggle for the rest of it. */
+  .dialer { display: flex; flex-direction: column; align-items: center; gap: 7px; flex: none; }
+  .orb { position: relative;
+         width: 66px; height: 66px; border-radius: 50%; border: none; cursor: pointer;
+         background: var(--accent); color: #fff; display: grid; place-items: center;
+         box-shadow: 0 6px 18px -6px rgba(11,110,120,.55); transition: .18s; }
+  :root[data-theme="dark"] .orb, :root:not([data-theme="light"]) .orb { color: #06181C; }
+  .orb:hover { transform: translateY(-1px); background: var(--accent-2); }
+  .orb:active { transform: translateY(0); }
+  .orb.live { background: var(--pass); box-shadow: 0 6px 18px -6px rgba(35,112,73,.55); }
+  .orb.muted { background: var(--surface-3); color: var(--muted);
+               box-shadow: none; border: 1px solid var(--line-strong); }
+  .orb.hearing { background: var(--block); box-shadow: 0 0 0 8px var(--block-soft); }
+  @media (prefers-reduced-motion: no-preference) {
+    .orb.hearing { animation: pulse 1.1s ease-in-out infinite; }
+  }
+  /* Icons are drawn, not glyphs: a font that fails to load must not leave the
+     primary control blank. */
+  /* Working. The gap between the caller finishing and the agent speaking is
+     a few milliseconds on a warmed voice and several seconds on a cold one,
+     and an interface that shows nothing in that gap reads as a dropped call.
+     A ring around the orb rather than a spinner in the middle: the orb keeps
+     saying what the microphone is doing, which does not stop mattering. */
+  .orb.thinking { box-shadow: 0 0 0 4px var(--accent-soft); }
+  .orb.thinking::after {
+    content: ""; position: absolute; inset: -7px; border-radius: 50%;
+    border: 2px solid transparent; border-top-color: var(--accent);
+    border-right-color: var(--accent);
+    animation: spin .9s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) {
+    .orb.thinking::after { animation: none; border-color: var(--accent);
+                           opacity: .45; }
+  }
+  .cstate.busy { color: var(--accent); }
+  /* The same wait, in the transcript, where the reply is going to land. */
+  .msg.pending .bub { display: flex; gap: 4px; align-items: center;
+                      min-height: 17px; }
+  .msg.pending .bub i { width: 5px; height: 5px; border-radius: 50%;
+                        background: var(--muted); opacity: .35;
+                        animation: blink 1.2s ease-in-out infinite; }
+  .msg.pending .bub i:nth-child(2) { animation-delay: .18s; }
+  .msg.pending .bub i:nth-child(3) { animation-delay: .36s; }
+  @keyframes blink { 40% { opacity: 1; } }
+  @media (prefers-reduced-motion: reduce) {
+    .msg.pending .bub i { animation: none; opacity: .55; }
+  }
+  /* A sample can take a moment to arrive; the button says so rather than
+     looking like it was not pressed. */
+  .vplay.loading { background-image: none; position: relative; }
+  .vplay.loading::after {
+    content: ""; position: absolute; inset: 4px; border-radius: 50%;
+    border: 2px solid var(--line-strong); border-top-color: var(--accent);
+    animation: spin .8s linear infinite;
+  }
+  @media (prefers-reduced-motion: reduce) { .vplay.loading::after { animation: none; } }
+  .orb-icon { width: 22px; height: 22px; display: block; background: currentColor;
+              -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
+              -webkit-mask-position: center; mask-position: center;
+              -webkit-mask-size: contain; mask-size: contain; }
+  .orb-icon.play { -webkit-mask-image: var(--ic-play); mask-image: var(--ic-play); }
+  .orb-icon.mic  { -webkit-mask-image: var(--ic-mic);  mask-image: var(--ic-mic); }
+  .orb-icon.off  { -webkit-mask-image: var(--ic-off);  mask-image: var(--ic-off); }
+  .orb-label { font-family: var(--f-mono); font-size: 10px; letter-spacing: .1em;
+               text-transform: uppercase; color: var(--muted); }
+  .endbtn { border: 1px solid var(--line-strong); background: var(--surface);
+            color: var(--block); cursor: pointer; border-radius: 100px;
+            padding: 5px 16px; font-size: 11.5px; font-weight: 700; }
+  .endbtn:hover { border-color: var(--block); background: var(--block-soft); }
+
+  .talkbar { display: none; align-items: center; justify-content: center; gap: 10px;
+             width: 100%; max-width: 560px; margin: 0 auto; flex: none; }
+  .talkbar.on { display: flex; }
+  .composer-inline { display: flex; gap: 8px; flex: 1; min-width: 0; }
+  .composer-inline input { flex: 1; min-width: 0; font: inherit; font-size: 13px;
+                    background: var(--surface); color: var(--ink);
+                    border: 1px solid var(--line); border-radius: 9px; padding: 9px 12px; }
+  .composer-inline button { border: none; border-radius: 9px; padding: 9px 16px; cursor: pointer;
+                     background: var(--accent); color: #fff; font-size: 13px; font-weight: 700; }
+  :root[data-theme="dark"] .composer-inline button,
+  :root:not([data-theme="light"]) .composer-inline button { color: #06181C; }
+  .micbtn { border: 1px solid var(--line); background: var(--surface); cursor: pointer;
+            border-radius: 9px; padding: 9px 14px; font-size: 13px; font-weight: 700;
+            color: var(--ink-2); display: flex; align-items: center; gap: 8px; flex: none; }
+  .micbtn.big { padding: 9px 18px; }
+  .micbtn.on { background: var(--pass-soft); border-color: var(--pass); color: var(--pass); }
+  .micbtn.hot { background: var(--block-soft); border-color: var(--block); color: var(--block); }
+  @media (prefers-reduced-motion: no-preference) {
+    .micbtn.hot { animation: pulse 1.2s ease-in-out infinite; }
+  }
+  .micdot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+
+  .player { display: none; align-items: center; gap: 9px; padding: 7px 14px; flex: none;
+            border-top: 1px solid var(--line); background: var(--surface-2); }
+  .player.on { display: flex; }
+  .player span { font-family: var(--f-mono); font-size: 9px; letter-spacing: .07em;
+                 text-transform: uppercase; color: var(--muted); flex: none; }
+  .player.blocked { background: var(--hold-soft); }
+  .player.blocked span { color: var(--hold); }
+  .player.blocked span::after { content: " — press play"; }
+  .player audio { flex: 1; height: 30px; min-width: 0; }
+
+  @media (max-width: 1180px) {
+    body { height: auto; overflow: auto; }
+    .app { grid-template-columns: 220px minmax(0,1fr); height: auto; overflow: visible; }
+    .col.right { grid-column: 1 / -1; }
+    .tx { max-height: 50vh; }
+    .wave-hold { min-height: 140px; }
+  }
+  @media (max-width: 780px) { .app { grid-template-columns: 1fr; } .under { grid-template-columns: 1fr; } }
+</style>
+
+<div class="app">
+
+  <!-- ============ CONTROLS ============ -->
+  <div class="col controls">
+    <div class="brand">
+      <div class="bname">Tiq Renewal Console</div>
+      <div class="bsub">ETIQA &middot; OUTBOUND SERVICING</div>
+    </div>
+
+    <div class="panel">
+      <div class="phead"><span class="ptitle">Call setup</span></div>
+      <div class="pbody">
+        <div class="field">
+          <label class="fieldlab" for="selPersona">Who we are calling</label>
+          <select id="selPersona"></select>
+        </div>
+        <div class="field">
+          <span class="fieldlab">Opening language</span>
+          <div class="seg" id="segLang" role="group" aria-label="Opening language"></div>
+        </div>
+        <div class="field">
+          <span class="fieldlab">Agent voice</span>
+          <div class="vpick collapsed" id="segVoice" role="radiogroup"
+               aria-label="Agent voice"></div>
+          <button type="button" class="vmore" id="voiceMore"
+                  aria-expanded="false" aria-controls="segVoice">Change voice</button>
+          <div class="vpickhint" id="voiceHint"></div>
+        </div>
+        <div class="field">
+          <span class="fieldlab">Mic sensitivity</span>
+          <div class="seg" id="segMic" role="group" aria-label="Microphone sensitivity"
+               title="Higher hears a quiet start; too high and the room counts as
+speech. Each setting is a multiple of the measured room level."></div>
+        </div>
+        <div class="field">
+          <span class="fieldlab">Register</span>
+          <div class="seg" role="group" aria-label="Register">
+            <button id="rgStandard" aria-pressed="true">STANDARD</button>
+            <button id="rgSinglish" aria-pressed="false">SINGLISH</button>
+          </div>
+          <button type="button" class="vmore" id="previewMore"
+                  aria-expanded="false" aria-controls="preview">Compare registers</button>
+          <div class="preview" id="preview" hidden></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="phead">
+        <span class="ptitle">Voice studio</span>
+        <button class="micbtn" id="vsToggle" aria-expanded="false"
+                aria-controls="vsBody" title="Agent voices: warm one up, or record your own">VOICES</button>
+      </div>
+      <div class="pbody" id="vsBody" hidden>
+        <p class="vsnote">Read the script below and the agent will speak in your
+          voice. The clip is stored on this machine and used to generate speech
+          &mdash; record only your own voice, and tell customers they are
+          speaking to a bot.</p>
+
+        <ol class="vstips">
+          <li>Somewhere quiet. A fan or an open window is enough to spoil it.</li>
+          <li>Read all <b id="vsMin">6</b> sentences &mdash; about 25 seconds. The clone
+            needs continuous speech, not a few words.</li>
+          <li>Normal speaking voice and pace. Not whispered, not read slowly.</li>
+          <li>Stay about a hand&rsquo;s width from the microphone the whole time.</li>
+        </ol>
+
+        <p class="vsprompt" id="vsPrompt">
+          Good afternoon, this is Dave calling from Etiqa Insurance.<br>
+          I am doing a servicing call about your home insurance renewal.<br>
+          Your policy is due for renewal next month, and the premium is unchanged.<br>
+          I would like to confirm a few details with you, if that is alright.<br>
+          It should only take a minute or two of your time.<br>
+          Thank you for holding, and I will send the details to your email.
+        </p>
+
+        <div class="vsrec">
+          <button type="button" class="vsbtn" id="vsRec">Start recording</button>
+          <div class="vsmeter" aria-hidden="true"><i id="vsLevel"></i></div>
+          <span class="vstime" id="vsTime">0.0s</span>
+        </div>
+        <div class="vsgauge" id="vsGauge" hidden>
+          <div class="vsbar"><i id="vsProgress"></i></div>
+          <span id="vsGoal">keep reading &mdash; the clone needs 8 seconds at minimum</span>
+        </div>
+
+        <div class="vssave" id="vsSave" hidden>
+          <audio id="vsPlay" controls preload="none"></audio>
+          <div class="vsrow">
+            <input id="vsName" maxlength="40" placeholder="Name this voice"
+                   aria-label="Name this voice">
+            <button type="button" class="vsbtn go" id="vsStore">Save</button>
+            <button type="button" class="vsbtn ghost" id="vsDiscard">Discard</button>
+          </div>
+        </div>
+        <p class="vserr" id="vsErr" hidden></p>
+
+        <div class="vslist" id="vsList"></div>
+      </div>
+    </div>
+
+    <div class="panel" id="policyPanel">
+      <div class="phead"><span class="ptitle">Policyholder</span></div>
+      <div class="pbody">
+        <dl class="persona" id="persona"></dl>
+        <div class="synthetic" title="Synthetic record — not a real customer">Synthetic &mdash; not a real customer</div>
+      </div>
+    </div>
+
+    <div class="actions">
+      <button class="btn ghost" id="btnSim">Run a scripted call</button>
+    </div>
+  </div>
+
+  <!-- ============ CENTRE: the wave ============ -->
+  <div class="col stage">
+    <div class="panel">
+      <div class="callbar">
+        <span class="dot" id="dot"></span>
+        <span class="cstate" id="cstate">Idle</span>
+        <!-- Read-only: the backend is fixed by the profile the server started
+             with, so a switch here could only pretend. -->
+        <span class="backend-info" id="backendInfo" title="">
+          <span class="bi-key" id="connBadge">&hellip;</span>
+          <span id="stProfile">&mdash;</span>
+          <span class="bi-sep">/</span><span id="stAsr">&mdash;</span>
+          <span class="bi-sep">/</span><span id="stTts">&mdash;</span>
+        </span>
+        <span class="ctimer" id="ctimer">00:00</span>
+      </div>
+    </div>
+
+    <div class="panel grow">
+      <div class="wave-panel">
+        <div class="wave-hold"><canvas id="wave" aria-label="Live audio activity"></canvas></div>
+        <div class="whom">
+          <span id="whoAgent"><i style="background:var(--agent)"></i> Agent</span>
+          <span id="whoCaller"><i style="background:var(--cust)"></i> Caller</span>
+        </div>
+        <div class="bignum">
+          <div class="stat"><b id="statLat">&mdash;</b><span>ms this turn</span></div>
+          <div class="stat"><b id="statP50">&mdash;</b><span>p50</span></div>
+          <div class="stat"><b id="statTurns">0</b><span>turns</span></div>
+        </div>
+        <!-- One big control, the way a voice app works: press to start, then
+             it becomes the mic toggle for the rest of the call. -->
+        <div class="dialer">
+          <button type="button" class="orb" id="orb" aria-label="Start call">
+            <span class="orb-icon" id="orbIcon" aria-hidden="true"></span>
+          </button>
+          <div class="orb-label" id="orbLabel">Start call</div>
+          <button type="button" class="endbtn" id="btnEnd" hidden>End call</button>
+        </div>
+        <div class="talkbar" id="talkbar">
+          <form id="composer" class="composer-inline">
+            <input id="callerInput" autocomplete="off"
+                   placeholder="&hellip;or type as the caller" aria-label="Caller utterance">
+            <button type="submit">Send</button>
+          </form>
+        </div>
+      </div>
+    </div>
+
+    <div class="under">
+      <div class="panel">
+        <div class="phead"><span class="ptitle">Script position</span></div>
+        <div class="pbody"><div class="rail" id="rail"></div></div>
+      </div>
+      <div class="panel">
+        <div class="phead"><span class="ptitle">Compliance gates</span></div>
+        <div class="pbody"><div class="gates" id="gates"></div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ RIGHT: transcripts, kept ============ -->
+  <div class="col right">
+    <div class="panel grow">
+      <div class="phead">
+        <span class="ptitle">Transcript &middot; all calls</span>
+        <span style="display:flex;gap:8px;align-items:center">
+          <span class="ptitle" id="txCount">0 calls</span>
+          <button class="micbtn" id="btnExport" title="Download every transcript"
+                  style="padding:3px 8px;font-size:10px">EXPORT</button>
+        </span>
+      </div>
+      <div class="tx" id="tx">
+        <div class="empty">Transcripts from every call stay here.<br>Start a call to begin.</div>
+      </div>
+      <div class="player" id="player">
+        <span id="playerLabel">Agent audio</span>
+        <audio id="playerAudio" controls preload="none"></audio>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+  var $ = function (id) { return document.getElementById(id); };
+
+  var STEPS = ["Greeting + right-party check", "Servicing purpose + property",
+               "Due date + renewal notice", "Premium, sums insured, email",
+               "Call to action", "Cross-sell — Tiq PA", "Close"];
+  var GATES = [{ id: "identity", label: "Identity verified" },
+               { id: "dnc", label: "DNC checked" },
+               { id: "consent", label: "Marketing consent" },
+               { id: "advice", label: "Advice guard" }];
+
+  // Caller lines for the simulated call, per persona language. Deterministic so
+  // a demo runs the same way twice.
+  // Enough replies to carry the script to its close. Ending mid-call would
+  // leave the console stuck "running" with no outcome recorded.
+  var SIM = {
+    en: ["Yes, speaking.", "When is it due?", "Yes, I received it.",
+         "Yes, that's the right email.", "Sure, thank you.",
+         "Maybe, I'll take a look.", "Thanks, goodbye."],
+    zh: ["是的，我是。", "什么时候到期？", "收到了。", "对，是这个邮箱。",
+         "好的，谢谢你。", "好，我看一下。", "谢谢，再见。"]
+  };
+
+  var ws = null, live = false, running = false, simTimer = null;
+  var lang = "en", voice = null, register = "standard", personas = [], sel = 0;
+  var railState = [], gateState = {}, lats = [], t0 = 0, tick = null;
+  var speaker = null, incoming = null, audioEl = null, audioUrl = null;
+  var callCount = 0, log = [];
+
+  // ---------------------------------------------------------------- render
+
+  function renderRail() {
+    $("rail").innerHTML = "";
+    STEPS.forEach(function (t, i) {
+      var d = document.createElement("div");
+      d.className = "step " + (railState[i] || "");
+      d.innerHTML = '<span class="step-i">' +
+        (railState[i] === "skip" ? "&times;" : (i + 1)) + '</span>' +
+        '<span class="step-t">' + t + '</span>';
+      $("rail").appendChild(d);
+    });
+  }
+  function renderGates() {
+    $("gates").innerHTML = "";
+    GATES.forEach(function (g) {
+      var st = gateState[g.id] || "";
+      var mark = st === "pass" ? "&check;" : st === "block" ? "&times;" : "&middot;";
+      var word = st === "pass" ? "Pass" : st === "block" ? "Blocked" : "Pending";
+      var d = document.createElement("div");
+      d.className = "gate " + st;
+      d.innerHTML = '<span class="gate-ic">' + mark + '</span>' +
+                    '<span class="gate-l">' + g.label + '</span>' +
+                    '<span class="gate-s">' + word + '</span>';
+      $("gates").appendChild(d);
+    });
+  }
+  function setSpeaker(s) {
+    speaker = s;
+    $("whoAgent").classList.toggle("act", s === "a");
+    $("whoCaller").classList.toggle("act", s === "c");
+  }
+
+  // ------------------------------------------------------------ transcript
+  // Never cleared between calls: this is the record, not a scratch view.
+
+  function scrollTx() { $("tx").scrollTop = $("tx").scrollHeight; }
+  function fresh() { if ($("tx").querySelector(".empty")) $("tx").innerHTML = ""; }
+
+  function addSeparator(label) {
+    fresh();
+    var d = document.createElement("div");
+    d.className = "callsep";
+    d.innerHTML = "<span>" + label + "</span>";
+    $("tx").appendChild(d); scrollTx();
+  }
+  function addMsg(kind, e) {
+    fresh();
+    var d = document.createElement("div");
+    d.className = "msg " + (kind === "agent" ? "agent" : "cust");
+    var lc = e.lang === "ZH" ? "zh" : e.lang === "SG" ? "sg" : "";
+    var meta = '<span class="who">' + (kind === "agent" ? "Agent" : "Caller") + '</span>' +
+               '<span class="lang ' + lc + '">' + (e.lang || "") + '</span>';
+    if (e.source) meta += '<span class="src">' + e.source + '</span>';
+    if (e.latency_ms) meta += '<span class="src">' + e.latency_ms + ' ms</span>';
+    d.innerHTML = '<div class="mmeta">' + meta + '</div><div class="bub">' + e.text + '</div>';
+    $("tx").appendChild(d); scrollTx();
+  }
+  function addSys(text, ok) {
+    fresh();
+    var d = document.createElement("div");
+    d.className = "sys" + (ok ? " ok" : "");
+    d.textContent = text;
+    $("tx").appendChild(d); scrollTx();
+  }
+  function addHandoff(e) {
+    fresh();
+    var d = document.createElement("div");
+    d.className = "handoff";
+    var head = (e.warm ? "Transferring to a colleague" : "Callback to a colleague")
+             + " · " + e.code;
+    d.innerHTML = '<div class="hh"></div><div class="hs"></div>';
+    d.querySelector(".hh").textContent = head;
+    d.querySelector(".hs").textContent = e.summary;
+    if (e.outstanding) {
+      var o = document.createElement("div");
+      o.className = "ho";
+      o.textContent = "Outstanding: " + e.outstanding;
+      d.appendChild(o);
+    }
+    $("tx").appendChild(d); scrollTx();
+  }
+  function addTool(e) {
+    fresh();
+    var d = document.createElement("div");
+    d.className = "tool";
+    d.innerHTML = "<b>" + e.tool + "</b> " + e.arg;
+    $("tx").appendChild(d); scrollTx();
+  }
+
+  function pushLat(ms) {
+    lats.push(ms);
+    $("statLat").textContent = ms;
+    $("statTurns").textContent = lats.length;
+    var s = lats.slice().sort(function (a, b) { return a - b; });
+    $("statP50").textContent = s[Math.floor(s.length / 2)];
+  }
+
+  // ---------------------------------------------------------- server events
+
+  // ------------------------------------------------------------- working
+  // The wait between the caller finishing and the agent speaking. A few
+  // milliseconds on a warmed voice, several seconds on a cold one — and an
+  // interface that shows nothing through it reads as a dropped call.
+
+  var workingSince = 0, workingGuard = null;
+
+  function setWorking(on) {
+    if (on && workingSince) return;                 // already waiting
+    workingSince = on ? Date.now() : 0;
+    $("orb").classList.toggle("thinking", !!on);
+    $("cstate").classList.toggle("busy", !!on);
+    if (on) {
+      $("cstate").textContent = "Working\u2026";
+      pendingBubble(true);
+      // Never spin forever: if the turn is lost, say so rather than leaving
+      // a ring turning over a call that is not coming back.
+      clearTimeout(workingGuard);
+      workingGuard = setTimeout(function () {
+        if (!workingSince) return;
+        setWorking(false);
+        addSys("No reply after 30 seconds \u2014 the turn may have been lost.", false);
+      }, 30000);
+    } else {
+      clearTimeout(workingGuard); workingGuard = null;
+      pendingBubble(false);
+    }
+  }
+
+  function pendingBubble(on) {
+    var old = document.getElementById("pendingMsg");
+    if (old) old.remove();
+    if (!on) return;
+    fresh();
+    var d = document.createElement("div");
+    d.id = "pendingMsg";
+    d.className = "msg agent pending";
+    d.setAttribute("aria-live", "polite");
+    d.setAttribute("aria-label", "Agent is preparing a reply");
+    d.innerHTML = '<div class="who">AGENT</div>' +
+                  '<div class="bub"><i></i><i></i><i></i></div>';
+    $("tx").appendChild(d);
+    scrollTx();
+  }
+
+  function apply(e) {
+    log.push(Object.assign({ at: new Date().toISOString() }, e));
+    if (e.kind === "transcript") {
+      if (e.speaker === "agent") setWorking(false);
+      setSpeaker(e.speaker === "agent" ? "a" : "c");
+      addMsg(e.speaker, e);
+      if (e.speaker === "agent" && e.latency_ms) pushLat(e.latency_ms);
+      $("cstate").textContent = e.speaker === "agent" ? "Agent speaking" : "Caller speaking";
+    } else if (e.kind === "turn") {
+      railState[e.turn - 1] = e.state;
+      if (e.state === "active") {
+        for (var i = 0; i < e.turn - 1; i++) if (!railState[i]) railState[i] = "done";
+      }
+      renderRail();
+    } else if (e.kind === "gate") {
+      gateState[e.gate] = e.state === "pending" ? "" : e.state;
+      renderGates();
+      if (e.note) addSys(e.note, false);
+    } else if (e.kind === "tool") { addTool(e); }
+    else if (e.kind === "handoff") { setWorking(false); addHandoff(e); }
+    else if (e.kind === "system") { addSys(e.text, !!e.ok); }
+    else if (e.kind === "status") { $("cstate").textContent = e.text; }
+    else if (e.kind === "end") { setWorking(false); addSys(e.text, true);
+                                 setSpeaker(null); stop(true); }
+  }
+
+  // ---------------------------------------------------------------- socket
+
+  function setConn(s, label) {
+    $("connBadge").textContent = label;
+    $("connBadge").className = "bi-key " + (s === "on" ? "on" : "off");
+  }
+
+  function connect() {
+    if (location.protocol === "file:" || !location.host) { setConn("off", "STANDALONE"); return; }
+    try { ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") +
+                             location.host + "/ws"); }
+    catch (e) { setConn("off", "OFFLINE"); return; }
+    ws.binaryType = "arraybuffer";
+    var settled = false;
+    var giveUp = setTimeout(function () { if (!settled) { settled = true; setConn("off", "OFFLINE"); } }, 2500);
+    ws.onopen = function () {
+      settled = true; clearTimeout(giveUp); live = true; setConn("on", "LIVE"); refreshHealth();
+    };
+    ws.onmessage = function (m) {
+      if (typeof m.data !== "string") { if (incoming) incoming.push(new Int16Array(m.data)); return; }
+      var e = JSON.parse(m.data);
+      if (e.kind === "audio_begin") { incoming = []; incoming.rate = e.sample_rate; return; }
+      if (e.kind === "audio_end") {
+        if (incoming && incoming.length) {
+          var n = incoming.reduce(function (a, b) { return a + b.length; }, 0);
+          var all = new Int16Array(n), off = 0;
+          incoming.forEach(function (c) { all.set(c, off); off += c.length; });
+          play(all, incoming.rate || 16000);
+        }
+        incoming = null; return;
+      }
+      if (e.kind === "call_started") return;
+      apply(e);
+    };
+    ws.onclose = function () {
+      if (!settled) { settled = true; clearTimeout(giveUp); setConn("off", "OFFLINE"); }
+      else if (live) { live = false; setConn("off", "DISCONNECTED"); }
+    };
+    ws.onerror = function () { if (!settled) { settled = true; clearTimeout(giveUp); setConn("off", "OFFLINE"); } };
+  }
+  function send(o) { if (live && ws && ws.readyState === 1) ws.send(JSON.stringify(o)); }
+  function sendBin(b) { if (live && ws && ws.readyState === 1) ws.send(b); }
+
+  // ------------------------------------------------------------- controls
+
+  function seg(box, items, current, onPick) {
+    box.innerHTML = "";
+    items.forEach(function (it) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.textContent = it.label;
+      b.title = it.title || it.label;
+      b.setAttribute("aria-pressed", it.id === current ? "true" : "false");
+      b.addEventListener("click", function () {
+        if (running) return;                    // fixed for the duration of a call
+        Array.prototype.forEach.call(box.children, function (c) {
+          c.setAttribute("aria-pressed", c === b ? "true" : "false");
+        });
+        onPick(it.id);
+      });
+      box.appendChild(b);
+    });
+  }
+
+  function refreshHealth() {
+    fetch("/api/health").then(function (r) { return r.json(); }).then(function (h) {
+      $("stProfile").textContent = h.profile === "mlx" ? "MLX · Apple Silicon"
+                                 : h.profile === "cuda" ? "CUDA · GPU server"
+                                 : "mock · no models";
+      $("stAsr").textContent = h.asr;
+      $("stTts").textContent = h.tts;
+      $("connBadge").className = "bi-key " + (h.ready ? "on" : "off");
+      $("backendInfo").title =
+        "Runtime: " + $("stProfile").textContent + "\nASR: " + h.asr +
+        "\nTTS: " + h.tts + "\nReady: " + (h.ready ? "yes" : (h.detail || "no"));
+      if (h.register) { register = h.register; setRegister(register); }
+      // The picker is drawn from /api/voices, which carries the notes and
+      // the warm state; health only settles which one starts selected.
+      if (h.voices && h.voices.length && !voicesDrawn) {
+        voice = h.default_voice || h.voices[0].id;
+        vsRefresh();
+      }
+    }).catch(function () {});
+  }
+
+  // ---------------------------------------------------------- voice studio
+  // Recording a reference clip is not the same job as listening on a call:
+  // no echo cancellation, no noise suppression, no automatic gain. All three
+  // help a recogniser and all three damage a voice we are about to clone.
+
+  var VS_RATE = 24000, VS_MIN = 8, VS_MAX = 90, VS_TARGET = 25;
+  var vsCtx = null, vsStream = null, vsNode = null, vsSrc = null;
+  var vsChunks = [], vsFrames = 0, vsRecording = false, vsClip = null, vsTimer = null;
+
+  function vsErr(msg) {
+    var el = $("vsErr");
+    if (!msg) { el.hidden = true; return; }
+    el.textContent = msg; el.hidden = false;
+  }
+  function vsResample(f32, from) {
+    if (from === VS_RATE) return f32;
+    var ratio = from / VS_RATE, out = new Float32Array(Math.floor(f32.length / ratio));
+    for (var i = 0; i < out.length; i++) {
+      var a = Math.floor(i * ratio), b = Math.floor((i + 1) * ratio), sum = 0, n = 0;
+      for (var j = a; j < b && j < f32.length; j++) { sum += f32[j]; n++; }
+      out[i] = n ? sum / n : 0;
+    }
+    return out;
+  }
+  function vsSeconds() { return vsFrames / VS_RATE; }
+  function vsTick() {
+    var secs = vsSeconds();
+    $("vsTime").textContent = secs.toFixed(1) + "s";
+    // Say how far through they are against the length that actually works,
+    // not just the minimum that is accepted.
+    var pct = Math.min(100, (secs / VS_TARGET) * 100);
+    $("vsProgress").style.width = pct + "%";
+    var gauge = $("vsGauge");
+    gauge.classList.toggle("ready", secs >= VS_MIN);
+    $("vsGoal").innerHTML = secs < VS_MIN
+      ? "keep reading &mdash; the clone needs " + VS_MIN + " seconds at minimum"
+      : secs < VS_TARGET
+      ? "usable now &mdash; finish the script for a steadier voice"
+      : "that is plenty. Stop whenever you reach the end of a sentence.";
+    if (secs >= VS_MAX) vsStopRecording();
+  }
+  async function vsStartRecording() {
+    vsErr(""); $("vsSave").hidden = true; $("vsGauge").hidden = false;
+    try {
+      vsStream = await navigator.mediaDevices.getUserMedia({
+        audio: { channelCount: 1, echoCancellation: false,
+                 noiseSuppression: false, autoGainControl: false } });
+    } catch (e) { vsErr("Microphone permission denied."); return; }
+    vsCtx = new (window.AudioContext || window.webkitAudioContext)();
+    vsSrc = vsCtx.createMediaStreamSource(vsStream);
+    var rate = vsCtx.sampleRate;
+    vsChunks = []; vsFrames = 0; vsRecording = true;
+    vsNode = vsCtx.createScriptProcessor(2048, 1, 1);
+    vsNode.onaudioprocess = function (e) {
+      if (!vsRecording) return;
+      var f = e.inputBuffer.getChannelData(0), sum = 0, pk = 0;
+      for (var i = 0; i < f.length; i++) { sum += f[i] * f[i]; pk = Math.max(pk, Math.abs(f[i])); }
+      var rms = Math.sqrt(sum / f.length);
+      $("vsLevel").style.width = Math.min(100, rms * 340) + "%";
+      $("vsLevel").parentElement.classList.toggle("low", pk < 0.05);
+      var down = vsResample(f, rate);
+      vsChunks.push(down); vsFrames += down.length;
+    };
+    vsSrc.connect(vsNode); vsNode.connect(vsCtx.destination);
+    vsTimer = setInterval(vsTick, 100);
+    var b = $("vsRec");
+    b.textContent = "Stop recording"; b.classList.add("rec");
+  }
+  function vsTeardown() {
+    vsRecording = false;
+    if (vsTimer) { clearInterval(vsTimer); vsTimer = null; }
+    if (vsNode) { vsNode.disconnect(); vsNode.onaudioprocess = null; vsNode = null; }
+    if (vsSrc) { vsSrc.disconnect(); vsSrc = null; }
+    if (vsStream) { vsStream.getTracks().forEach(function (t) { t.stop(); }); vsStream = null; }
+    if (vsCtx) { vsCtx.close(); vsCtx = null; }
+    $("vsLevel").style.width = "0%";
+    var b = $("vsRec");
+    b.textContent = "Start recording"; b.classList.remove("rec");
+  }
+  function vsStopRecording() {
+    var secs = vsSeconds();
+    var all = new Float32Array(vsFrames), off = 0;
+    vsChunks.forEach(function (c) { all.set(c, off); off += c.length; });
+    vsTeardown();
+    $("vsGauge").hidden = true;
+    if (secs < VS_MIN) {
+      vsErr("That was " + secs.toFixed(0) + " seconds. The clone needs at least " +
+            VS_MIN + " — try reading the whole prompt.");
+      return;
+    }
+    vsClip = new Int16Array(all.length);
+    for (var i = 0; i < all.length; i++) {
+      var v = Math.max(-1, Math.min(1, all[i]));
+      vsClip[i] = v < 0 ? v * 0x8000 : v * 0x7FFF;
+    }
+    $("vsPlay").src = URL.createObjectURL(wavBlob(vsClip, VS_RATE));
+    $("vsSave").hidden = false;
+    $("vsName").focus();
+  }
+  $("vsRec").addEventListener("click", function () {
+    vsRecording ? vsStopRecording() : vsStartRecording();
+  });
+  $("vsDiscard").addEventListener("click", function () {
+    vsClip = null; $("vsSave").hidden = true; vsErr(""); $("vsTime").textContent = "0.0s";
+  });
+  $("vsStore").addEventListener("click", function () {
+    if (!vsClip) return;
+    var name = $("vsName").value.trim();
+    if (!name) { vsErr("Give the voice a name."); return; }
+    var btn = $("vsStore");
+    btn.disabled = true; btn.textContent = "Saving";
+    fetch("/api/voices?sample_rate=" + VS_RATE + "&label=" + encodeURIComponent(name), {
+      method: "POST", headers: { "Content-Type": "application/octet-stream" },
+      body: vsClip.buffer
+    }).then(function (r) { return r.json().then(function (d) { return { ok: r.ok, d: d }; }); })
+      .then(function (res) {
+        if (!res.ok) { vsErr(res.d.error || "Could not save that recording."); return; }
+        vsErr(""); vsClip = null;
+        $("vsSave").hidden = true; $("vsName").value = ""; $("vsTime").textContent = "0.0s";
+        vsRefresh(); refreshHealth();
+        vsWarm(res.d.voice.id);            // useless until warm; start straight away
+      })
+      .catch(function () { vsErr("Could not reach the server."); })
+      .finally(function () { btn.disabled = false; btn.textContent = "Save"; });
+  });
+
+  function vsWarm(id) {
+    fetch("/api/voices/" + encodeURIComponent(id) + "/warm", { method: "POST" })
+      .then(vsRefresh).catch(function () {});
+  }
+  function vsPitch(id, semitones) {
+    fetch("/api/voices/" + encodeURIComponent(id) + "/pitch", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ semitones: semitones })
+    }).then(vsRefresh).catch(function () {});
+  }
+  function vsDelete(id, label) {
+    if (!window.confirm("Delete “" + label + "”? The recording and every line " +
+                        "rendered in it are removed.")) return;
+    fetch("/api/voices/" + encodeURIComponent(id), { method: "DELETE" })
+      .then(function () { vsRefresh(); refreshHealth(); }).catch(function () {});
+  }
+
+  var vsPoll = null;
+  function vsRefresh() {
+    return fetch("/api/voices").then(function (r) { return r.json(); }).then(function (d) {
+      // Every voice, not only the recorded ones. A shipped voice needs
+      // warming too — the first call in a cold voice synthesises each line
+      // live, which is two to four seconds a turn — and there was no way to
+      // do that without the command line.
+      var box = $("vsList");
+      box.innerHTML = "";
+      var warming = false;
+      d.voices.forEach(function (v) {
+        var el = document.createElement("div");
+        el.className = "vsvoice";
+        var w = v.warm, pct = w && w.total ? Math.round(100 * w.done / w.total) : 0;
+        var state = !w ? "not warmed"
+                  : w.state === "running" ? "warming " + w.done + " of " + w.total
+                  : w.state === "done" ? "warm — every scripted line rendered"
+                  : w.state === "failed" ? "warm-up failed: " + w.detail
+                  : "warm-up stopped" + (w.detail ? " — " + w.detail : "");
+        if (w && w.state === "running") warming = true;
+        el.innerHTML =
+          '<div class="vh"><span class="vn"></span>' +
+          '<span class="vm">' + (v.custom ? v.seconds.toFixed(0) + 's · ' : '') +
+          Math.round(v.target_f0) + ' Hz</span></div>' +
+          (v.custom
+            ? '<div class="vspitch"><label>Pitch</label>' +
+              '<input type="range" min="-6" max="6" step="0.5" value="' + v.semitones + '">' +
+              '<span class="vm">' + (v.semitones > 0 ? "+" : "") + v.semitones +
+              '</span></div>'
+            : '') +
+          (w && w.state === "running"
+            ? '<div class="vsbar"><i style="width:' + pct + '%"></i></div>' : '') +
+          '<div class="vswarm' + (w && w.state === "done" ? '' : ' cold') + '">' +
+          state + '</div>' +
+          '<div class="vsacts"></div>';
+        el.querySelector(".vn").textContent = v.label;   // never trust a label to markup
+        var acts = el.querySelector(".vsacts");
+        function act(text, cls, fn) {
+          var b = document.createElement("button");
+          b.type = "button"; b.className = "vsbtn" + (cls ? " " + cls : "");
+          b.textContent = text; b.addEventListener("click", fn); acts.appendChild(b);
+        }
+        if (v.custom) act("Hear the clip", "ghost", function () {
+          var a = ensureAudio(); stopPlayback();
+          a.src = "/api/voices/" + encodeURIComponent(v.id) + "/sample.wav";
+          $("player").classList.add("on"); a.play().catch(function () {});
+        });
+        if (!w || w.state !== "running") act("Warm up", "", function () { vsWarm(v.id); });
+        else act("Stop", "ghost", function () {
+          fetch("/api/voices/" + encodeURIComponent(v.id) + "/warm",
+                { method: "DELETE" }).then(vsRefresh);
+        });
+        // A voice the deployment ships is not the console's to delete or
+        // retune: its pitch is in the cache key, and every line already
+        // rendered against it belongs to the deployment too.
+        if (v.custom) act("Delete", "ghost", function () { vsDelete(v.id, v.label); });
+        var slider = el.querySelector("input[type=range]");
+        if (slider) slider.addEventListener("change",
+          function () { vsPitch(v.id, Number(slider.value)); });
+        box.appendChild(el);
+      });
+  
+      if (voicesDrawn) paintVoices(d.voices); else drawVoices(d.voices);
+      if (warming && !vsPoll) vsPoll = setInterval(vsRefresh, 1500);
+      if (!warming && vsPoll) { clearInterval(vsPoll); vsPoll = null; refreshHealth(); }
+    }).catch(function () {});
+  }
+
+  $("vsToggle").addEventListener("click", function () {
+    var body = $("vsBody"), open = body.hidden;
+    body.hidden = !open;
+    this.setAttribute("aria-expanded", open ? "true" : "false");
+    this.textContent = open ? "CLOSE" : "VOICES";
+    if (open) vsRefresh(); else if (vsRecording) vsStopRecording();
+  });
+  vsRefresh();
+
+  // ---------------------------------------------------------- voice picker
+  var voicesDrawn = false, voiceRows = {};
+
+  function drawVoices(list) {
+    var box = $("segVoice");
+    box.innerHTML = ""; voiceRows = {};
+    list.forEach(function (v) {
+      var row = document.createElement("button");
+      row.type = "button";
+      row.className = "vrow";
+      row.setAttribute("role", "radio");
+      row.setAttribute("aria-checked", v.id === voice ? "true" : "false");
+      var dot = document.createElement("span");
+      dot.className = "vdot";
+      var lab = document.createElement("span");
+      lab.className = "vlab";
+      var nm = document.createElement("span");
+      nm.className = "vnm"; nm.textContent = v.label;
+      var sub = document.createElement("span");
+      sub.className = "vsub";
+      lab.appendChild(nm); lab.appendChild(sub);
+      var play = document.createElement("span");
+      play.className = "vplay"; play.setAttribute("role", "button");
+      play.title = "Hear " + v.label;
+      // Auditioning is not choosing, and it stays available during a call —
+      // the moment you most want to hear the alternative is while one is
+      // running.
+      play.addEventListener("click", function (e) {
+        e.stopPropagation();
+        var a = ensureAudio(); stopPlayback();
+        play.classList.add("loading");
+        function done() {
+          play.classList.remove("loading");
+          a.removeEventListener("canplay", done);
+          a.removeEventListener("error", done);
+        }
+        a.addEventListener("canplay", done);
+        a.addEventListener("error", done);
+        a.src = "/api/voices/" + encodeURIComponent(v.id) + "/sample.wav?t=" + Date.now();
+        $("player").classList.add("on"); $("playerLabel").textContent =
+          v.label + " — sample";
+        a.play().catch(function () {});
+        // A sample that never resolves must not leave the button spinning.
+        setTimeout(done, 8000);
+      });
+      row.appendChild(dot); row.appendChild(lab);
+      if (v.sample !== false) row.appendChild(play);
+      row.addEventListener("click", function () {
+        if (running) return;              // fixed for the duration of a call
+        voice = v.id;
+        Object.keys(voiceRows).forEach(function (id) {
+          voiceRows[id].row.setAttribute("aria-checked", id === voice ? "true" : "false");
+        });
+        collapseVoices(true);
+        updateVoiceHint();
+      });
+      box.appendChild(row);
+      voiceRows[v.id] = { row: row, sub: sub, dot: dot, label: v.label };
+    });
+    voicesDrawn = true;
+    paintVoices(list);
+  }
+
+  // Warm or cold is the difference between a line arriving in a millisecond
+  // and the caller waiting three seconds for it, so the picker shows it.
+  function paintVoices(list) {
+    // The list is drawn before /api/health has said which voice starts
+    // selected, so the selection is re-synced on every paint rather than
+    // only at draw time — otherwise the picker opens with nothing chosen.
+    if (!voiceRows[voice]) voice = list.length ? list[0].id : voice;
+    list.forEach(function (v) {
+      var r = voiceRows[v.id];
+      if (!r) return;
+      r.row.setAttribute("aria-checked", v.id === voice ? "true" : "false");
+      var warm = v.warm && v.warm.state === "done";
+      var bits = [];
+      if (v.note) bits.push(v.note);
+      if (v.target_f0) bits.push(Math.round(v.target_f0) + " Hz");
+      r.sub.textContent = bits.join(" · ");
+      r.missing = v.warm ? v.warm.total - v.warm.done : 0;
+      r.total = v.warm ? v.warm.total : 0;
+      var nearly = !warm && r.missing && r.missing <= r.total * 0.1;
+      r.dot.className = "vdot" + (warm ? " warm" : nearly ? " nearly" : "");
+      r.dot.title = warm ? "pre-rendered"
+                  : nearly ? r.missing + " of " + r.total + " lines still to render"
+                  : "not warmed — lines synthesise live";
+    });
+    updateVoiceHint();
+  }
+
+  function collapseVoices(on) {
+    $("segVoice").classList.toggle("collapsed", !!on);
+    var b = $("voiceMore");
+    b.setAttribute("aria-expanded", on ? "false" : "true");
+    b.textContent = on ? "Change voice" : "Done";
+  }
+
+  // An explainer, not a control: useful while you are deciding, and a third
+  // of the column the rest of the time.
+  $("previewMore").addEventListener("click", function () {
+    var box = $("preview"), open = box.hidden;
+    box.hidden = !open;
+    this.setAttribute("aria-expanded", open ? "true" : "false");
+    this.textContent = open ? "Hide comparison" : "Compare registers";
+    if (open) refreshPreview();
+  });
+
+  $("voiceMore").addEventListener("click", function () {
+    collapseVoices(!$("segVoice").classList.contains("collapsed"));
+  });
+
+  function updateVoiceHint() {
+    var box = $("voiceHint"), r = voiceRows[voice];
+    box.innerHTML = "";
+    if (!r) return;
+    var warm = r.dot.classList.contains("warm");
+    box.classList.toggle("cold", !warm);
+    if (warm) {
+      box.hidden = true;                 // nothing to say and nothing to do
+      return;
+    }
+    box.hidden = false;
+    // Proportional to what is actually missing. "Every line is synthesised
+    // during the call" is alarming and, at 228 of 230 rendered, untrue.
+    var left = r.missing || 0;
+    box.appendChild(document.createTextNode(
+      left && left <= r.total * 0.1
+        ? "Nearly warm — " + left + (left === 1 ? " line" : " lines")
+          + " will still be synthesised during the call."
+        : "Not warmed. Every line is synthesised during the call — seconds a "
+          + "turn, not milliseconds."));
+    var b = document.createElement("button");
+    b.type = "button";
+    b.textContent = "Warm up " + r.label;
+    b.addEventListener("click", function () { vsWarm(voice); });
+    box.appendChild(b);
+  }
+
+  function setRegister(r) {
+    register = r;
+    $("rgStandard").setAttribute("aria-pressed", r === "standard" ? "true" : "false");
+    $("rgSinglish").setAttribute("aria-pressed", r === "singlish" ? "true" : "false");
+    refreshPreview();
+  }
+
+  // Pull the real rendered line rather than showing a hand-written sample —
+  // a preview that can drift from what the bot says is worse than none.
+  function refreshPreview() {
+    var p = personas[sel];
+    if (!p || $("preview").hidden) return;
+    fetch("/api/preview?policy_id=" + encodeURIComponent(p.policy_id) +
+          "&lang=" + lang + "&turn=3")
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        var chosen = register === "singlish" ? d.singlish : d.standard;
+        var other = register === "singlish" ? d.standard : d.singlish;
+        $("preview").innerHTML =
+          '<b>Turn 3 in this register</b>' +
+          '<span class="on">' + chosen + '</span>' +
+          '<b style="margin-top:5px">The other one says</b>' +
+          '<span class="off">' + other + '</span>';
+      }).catch(function () { $("preview").textContent = ""; });
+  }
+  $("rgStandard").addEventListener("click", function () { if (!running) setRegister("standard"); });
+  $("rgSinglish").addEventListener("click", function () { if (!running) setRegister("singlish"); });
+
+  seg($("segLang"), [{ id: "en", label: "ENGLISH" }, { id: "zh", label: "华语" }],
+      "en", function (l) { lang = l; refreshPreview(); });
+
+  function loadPersonas() {
+    fetch("/api/personas").then(function (r) { return r.json(); }).then(function (ps) {
+      personas = ps;
+      $("selPersona").innerHTML = "";
+      ps.forEach(function (p, i) {
+        var o = document.createElement("option");
+        o.value = i; o.textContent = p.name + " — " + p.policy_id;
+        $("selPersona").appendChild(o);
+      });
+      selectPersona(0);
+    }).catch(function () {});
+  }
+  function selectPersona(i) {
+    sel = i;
+    var p = personas[i]; if (!p) return;
+    $("persona").innerHTML =
+      '<dt>Name</dt><dd>' + p.name + '</dd>' +
+      '<dt>Policy</dt><dd>' + p.policy_id + '</dd>' +
+      '<dt>Property</dt><dd>' + p.property_address + '</dd>' +
+      '<dt>Due</dt><dd>' + p.due_date + '</dd>' +
+      '<dt>Premium</dt><dd>S$' + p.premium + ' · ' + p.term_years + ' yr</dd>' +
+      '<dt>DNC</dt><dd>' + (p.dnc_listed ? "listed" : "clear") +
+        ' · consent ' + (p.marketing_consent ? "yes" : "no") + '</dd>';
+    refreshPreview();
+  }
+  $("selPersona").addEventListener("change", function (e) {
+    if (!running) selectPersona(+e.target.value);
+  });
+
+  // ------------------------------------------------------------ call state
+
+  function fmt(ms) {
+    var s = Math.floor(ms / 1000);
+    return String(Math.floor(s / 60)).padStart(2, "0") + ":" + String(s % 60).padStart(2, "0");
+  }
+
+  function beginCall(simulated) {
+    if (!live) { addSys("Not connected to the server.", false); return; }
+    railState = []; gateState = {}; lats = [];
+    renderRail(); renderGates();
+    $("statLat").textContent = "—"; $("statP50").textContent = "—"; $("statTurns").textContent = "0";
+    running = true;
+    callCount++;
+    var p = personas[sel] || {};
+    addSeparator("Call " + callCount + " · " + (p.name || "?") + " · " +
+                 lang.toUpperCase() + " · " + (voice || "") + " · " + register +
+                 (simulated ? " · simulated" : ""));
+    $("btnSim").disabled = true;
+    $("btnEnd").hidden = false;
+    setOrb(simulated ? "muted" : "on");
+    $("dot").className = "dot live";
+    $("cstate").textContent = "Connected";
+    t0 = Date.now();
+    tick = setInterval(function () { $("ctimer").textContent = fmt(Date.now() - t0); }, 500);
+    send({ type: "start", policy_id: p.policy_id, register: register,
+           voice: voice, lang: lang });
+    $("txCount").textContent = callCount + (callCount === 1 ? " call" : " calls");
+    if (!simulated) { $("talkbar").classList.add("on"); $("callerInput").focus(); }
+  }
+
+  function stop(finished) {
+    if (simTimer) { clearTimeout(simTimer); simTimer = null; }
+    if (tick) { clearInterval(tick); tick = null; }
+    running = false;
+    $("btnSim").disabled = false;
+    $("btnEnd").hidden = true;
+    setOrb("idle");
+    $("dot").className = "dot";
+    setWorking(false);
+    $("cstate").textContent = finished ? "Call ended" : "Idle";
+    $("talkbar").classList.remove("on");
+    setSpeaker(null);
+    if (micOn) micStop();
+  }
+
+  // ------------------------------------------------- simulated call driver
+  // Plays the caller side automatically so a demo runs hands-free and the
+  // same way twice.
+
+  function simulate() {
+    beginCall(true);
+    var lines = (SIM[lang] || SIM.en).slice();
+    var i = 0;
+    (function next() {
+      if (!running) return;
+      if (i >= lines.length) {
+        // Out of scripted replies. Hang up rather than leaving the call open —
+        // an unfinished call blocks the next one and records no outcome.
+        simTimer = setTimeout(function () {
+          if (running) { send({ type: "hangup" }); stop(true); }
+        }, 3000);
+        return;
+      }
+      var text = lines[i++];
+      simTimer = setTimeout(function () {
+        if (!running) return;
+        send({ type: "say", text: text });
+        setWorking(true);              // the scripted call waits the same way
+        next();
+      }, i === 1 ? 2200 : 3400);      // let the agent finish before replying
+    })();
+  }
+
+  $("btnSim").addEventListener("click", function () { if (!running) simulate(); });
+
+  $("composer").addEventListener("submit", function (e) {
+    e.preventDefault();
+    var v = $("callerInput").value.trim();
+    if (v) { send({ type: "say", text: v }); $("callerInput").value = "";
+             setWorking(true); }
+  });
+
+  // ---------------------------------------------------------------- export
+
+  $("btnExport").addEventListener("click", function () {
+    fetch("/api/calls").then(function (r) { return r.json(); }).then(function (calls) {
+      var blob = new Blob([JSON.stringify({ exported: new Date().toISOString(),
+                                            calls: calls, events: log }, null, 2)],
+                          { type: "application/json" });
+      var a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = "tiq-transcripts-" + new Date().toISOString().slice(0, 19) + ".json";
+      a.click();
+      setTimeout(function () { URL.revokeObjectURL(a.href); }, 2000);
+    }).catch(function () { addSys("Could not reach the server for the export.", false); });
+  });
+
+  // ------------------------------------------------------------- playback
+  // A media element, not Web Audio: Web Audio reported success and produced
+  // no sound in some browsers. This also autoplays on the click that started
+  // the call, and pauses cleanly for barge-in.
+
+  function ensureAudio() {
+    if (!audioEl) {
+      audioEl = $("playerAudio");
+      audioEl.addEventListener("ended", function () { if (speaker === "a") setSpeaker(null); });
+    }
+    return audioEl;
+  }
+  function wavBlob(int16, rate) {
+    var bytes = int16.length * 2, buf = new ArrayBuffer(44 + bytes), v = new DataView(buf);
+    function a(o, s) { for (var i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); }
+    a(0, "RIFF"); v.setUint32(4, 36 + bytes, true); a(8, "WAVEfmt ");
+    v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+    v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true);
+    v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+    a(36, "data"); v.setUint32(40, bytes, true);
+    new Int16Array(buf, 44).set(int16);
+    return new Blob([buf], { type: "audio/wav" });
+  }
+  function stopPlayback() { if (audioEl) { try { audioEl.pause(); } catch (e) {} } }
+  function play(int16, rate) {
+    var el = ensureAudio();
+    stopPlayback();
+    if (audioUrl) URL.revokeObjectURL(audioUrl);
+    audioUrl = URL.createObjectURL(wavBlob(int16, rate));
+    el.src = audioUrl;
+    $("player").classList.add("on");
+    $("player").classList.remove("blocked");
+    setSpeaker("a");
+    var p = el.play();
+    if (p && p.catch) p.catch(function () { $("player").classList.add("blocked"); setSpeaker(null); });
+  }
+
+  // ------------------------------------------------------------------ mic
+
+  var SR = 16000, SILENCE_MS = 700, PREROLL = 44;
+  // Fixed thresholds assume a quiet room. In a noisy one the floor sits above
+  // them, every rustle counts as speech, and the recogniser invents sentences
+  // over it. Calibrate against the actual room instead.
+  //
+  // How far above the room a frame has to be before we start capturing. The
+  // room is measured; how hard to lean on that measurement is a judgement
+  // about this microphone in this room, so it is the caller's to make.
+  var SENSITIVITY = { normal: 3.4, high: 2.6, highest: 2.0 };
+  var micSens = "high";
+  var NOISE_MARGIN = SENSITIVITY[micSens];
+  // Release is deliberately *not* tied to sensitivity: it decides when the
+  // utterance has ended, and moving it with the arming threshold would change
+  // how long every reply waits.
+  var RELEASE_MARGIN = 1.7;
+  var FLOOR_MIN = 0.004, FLOOR_MAX = 0.06;
+  // The run-up sent ahead of the first frame that crossed the threshold. A
+  // word does not start at full volume — "yes" opens on a breath well under
+  // the floor margin — so without this the recogniser is handed a clipped
+  // first syllable and either mis-hears it or rejects the buffer.
+  var RUNUP_MS = 320;
+  // Matches the server's own voiced-duration floor. Stricter here meant a
+  // short reply was dropped in the browser and never reached the gate that
+  // was designed to judge it: "yes" and "对" are ~250 ms of voiced audio, and
+  // the caller had to say a whole sentence before anything happened.
+  var MIN_VOICED_MS = 180;
+  // Cutting the agent off is destructive — the caller loses the sentence and
+  // has to ask for it again. So interrupting takes more evidence than merely
+  // starting to listen does: louder than the room, and sustained.
+  var BARGE_MARGIN = 7.0, BARGE_MS = 260;
+
+  (function micSensitivity() {
+    try {
+      var saved = localStorage.getItem("voicebot.micSensitivity");
+      if (saved && SENSITIVITY[saved]) { micSens = saved; NOISE_MARGIN = SENSITIVITY[saved]; }
+    } catch (e) {}
+    var box = $("segMic");
+    Object.keys(SENSITIVITY).forEach(function (key) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.textContent = key.toUpperCase();
+      b.title = "Arm at " + SENSITIVITY[key] + "x the measured room level";
+      b.setAttribute("aria-pressed", key === micSens ? "true" : "false");
+      b.addEventListener("click", function () {
+        micSens = key; NOISE_MARGIN = SENSITIVITY[key];
+        // Re-measure: the old floor was learned against a different bar.
+        calibN = 0; floor = 0.006;
+        Array.prototype.forEach.call(box.children, function (c) {
+          c.setAttribute("aria-pressed", c === b ? "true" : "false");
+        });
+        try { localStorage.setItem("voicebot.micSensitivity", key); } catch (e) {}
+      });
+      box.appendChild(b);
+    });
+  })();
+
+  var actx = null, micStream = null, micNode = null, micSrc = null;
+  var micOn = false, talking = false, lastVoice = 0, preroll = [];
+  var floor = 0.006, calibN = 0, voicedMs = 0, armedMs = 0;
+
+  function downsample(buf, rate) {
+    if (rate === SR) return buf;
+    var ratio = rate / SR, out = new Float32Array(Math.floor(buf.length / ratio));
+    for (var i = 0; i < out.length; i++) {
+      var s = Math.floor(i * ratio), e = Math.floor((i + 1) * ratio), sum = 0, n = 0;
+      for (var j = s; j < e && j < buf.length; j++) { sum += buf[j]; n++; }
+      out[i] = n ? sum / n : 0;      // averaging, not decimation: aliasing hurts the ASR
+    }
+    return out;
+  }
+  function pcm16(f) {
+    var o = new Int16Array(f.length);
+    for (var i = 0; i < f.length; i++) {
+      var s = Math.max(-1, Math.min(1, f[i]));
+      o[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+    }
+    return o.buffer;
+  }
+  function onFrame(f32, rate) {
+    var mono = downsample(f32, rate), sum = 0;
+    for (var i = 0; i < mono.length; i++) sum += mono[i] * mono[i];
+    var rms = Math.sqrt(sum / mono.length), now = Date.now();
+    var frameMs = (mono.length / SR) * 1000;
+
+    // Track the quiet floor while nobody is talking, so the threshold follows
+    // the room rather than a guess made on a different machine. Not while the
+    // agent is speaking: that measures our own voice coming back through the
+    // speakers, and the inflated floor then swallows the caller's next turn.
+    var agentSpeaking = (speaker === "a");
+    var onThreshold = floor * (agentSpeaking ? BARGE_MARGIN : NOISE_MARGIN);
+    var offThreshold = floor * RELEASE_MARGIN;
+
+    // Track the quiet floor while nobody is talking, so the threshold follows
+    // the room rather than a guess made on a different machine. Not while the
+    // agent is speaking: that measures our own voice coming back through the
+    // speakers, and the inflated floor then swallows the caller's next turn.
+    //
+    // And not from frames that are already over the line. A quiet speaker
+    // spends the start of every sentence below the threshold, so those frames
+    // were being averaged into the floor — the softer they spoke the higher
+    // the bar went. Rise slowly, fall quickly: a room that gets noisier can
+    // wait, a room that goes quiet should be believed at once.
+    if (!talking && !agentSpeaking && rms < onThreshold) {
+      floor = calibN < 25 ? (floor * calibN + rms) / (calibN + 1)
+            : rms < floor ? floor * 0.94 + rms * 0.06
+                          : floor * 0.997 + rms * 0.003;
+      floor = Math.min(FLOOR_MAX, Math.max(FLOOR_MIN, floor));
+      calibN++;
+    }
+
+    if (!talking) {
+      // One loud frame while the agent talks is a cough, a keyboard, or our
+      // own audio leaking past the echo canceller. Acting on it killed the
+      // line mid-sentence for no reason the caller could see.
+      armedMs = rms > onThreshold ? armedMs + frameMs : 0;
+      if (armedMs > 0 && armedMs >= (agentSpeaking ? BARGE_MS : 0)) {
+        // Read before it is cleared. Written the other way round the barge
+        // dwell counted as zero, so the 260 ms it had already swallowed of
+        // the caller's first word was never sent.
+        var armed = armedMs;
+        talking = true; voicedMs = armed; armedMs = 0;
+        setOrb("hearing");
+        if (agentSpeaking) { stopPlayback(); send({ type: "barge_in" }); }
+        // Send only the run-up we actually need — enough to recover the word
+        // onset, plus whatever the dwell has already swallowed. The whole ring
+        // buffer would staple half a second of silence to the front of every
+        // turn.
+        var need = Math.ceil((RUNUP_MS + armed) / frameMs) + 1;
+        preroll.slice(-need).forEach(sendBin); preroll = [];
+      }
+    }
+    if (rms > offThreshold) { lastVoice = now; if (talking) voicedMs += frameMs; }
+
+    var buf = pcm16(mono);
+    if (talking) {
+      sendBin(buf);
+      if (now - lastVoice > SILENCE_MS) {
+        talking = false;
+        setOrb(micOn ? "on" : "muted");
+        if (voicedMs >= MIN_VOICED_MS) {
+          // The endpointer's wait is part of what the caller experiences as
+          // the pause before the reply, so the server counts it.
+          send({ type: "utterance_end", trailing_ms: SILENCE_MS });
+          setWorking(true);
+        } else {
+          // A blip, not a turn. Sending it invites the recogniser to invent
+          // something; the server would reject it, but not sending is cheaper.
+          send({ type: "discard_utterance" });
+        }
+        voicedMs = 0;
+      }
+    } else { preroll.push(buf); if (preroll.length > PREROLL) preroll.shift(); }
+  }
+  async function micStart() {
+    if (!live) { addSys("Microphone needs the local server.", false);
+                 setOrb(running ? "muted" : "idle"); return; }
+    try {
+      micStream = await navigator.mediaDevices.getUserMedia({
+        audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true,
+                 autoGainControl: true } });
+    } catch (e) { addSys("Microphone permission denied — typing still works.", false);
+                  setOrb(running ? "muted" : "idle"); return; }
+    actx = new (window.AudioContext || window.webkitAudioContext)();
+    micSrc = actx.createMediaStreamSource(micStream);
+    var rate = actx.sampleRate;
+    micNode = actx.createScriptProcessor(1024, 1, 1);
+    micNode.onaudioprocess = function (e) { if (micOn) onFrame(e.inputBuffer.getChannelData(0), rate); };
+    micSrc.connect(micNode); micNode.connect(actx.destination);
+    micOn = true;
+    setOrb("on");
+  }
+  function micStop() {
+    micOn = false; talking = false; preroll = []; armedMs = 0;
+    if (micNode) { micNode.disconnect(); micNode.onaudioprocess = null; micNode = null; }
+    if (micSrc) { micSrc.disconnect(); micSrc = null; }
+    if (micStream) { micStream.getTracks().forEach(function (t) { t.stop(); }); micStream = null; }
+    if (actx) { actx.close(); actx = null; }
+    setOrb(running ? "muted" : "idle");
+  }
+  // ---------------------------------------------------------------- orb
+  // Idle: start the call and open the mic. In call: mute / unmute. This is
+  // the shape people already know from every other voice app, and it means
+  // the primary action is never more than one press away.
+
+  function setOrb(state) {
+    var orb = $("orb"), icon = $("orbIcon");
+    orb.classList.remove("live", "muted", "hearing");
+    icon.className = "orb-icon " + (state === "idle" ? "play"
+                                  : state === "muted" ? "off" : "mic");
+    if (state === "idle") {
+      $("orbLabel").textContent = "Start call";
+      orb.setAttribute("aria-label", "Start call");
+      orb.setAttribute("aria-pressed", "false");
+    } else if (state === "muted") {
+      orb.classList.add("muted");
+      $("orbLabel").textContent = "Mic off — tap to speak";
+      orb.setAttribute("aria-label", "Unmute microphone");
+      orb.setAttribute("aria-pressed", "false");
+    } else if (state === "hearing") {
+      orb.classList.add("hearing");
+      $("orbLabel").textContent = "Listening";
+      orb.setAttribute("aria-label", "Mute microphone");
+      orb.setAttribute("aria-pressed", "true");
+    } else {
+      orb.classList.add("live");
+      $("orbLabel").textContent = "Mic on — tap to mute";
+      orb.setAttribute("aria-label", "Mute microphone");
+      orb.setAttribute("aria-pressed", "true");
+    }
+  }
+
+  $("orb").addEventListener("click", function () {
+    if (!running) { beginCall(false); micStart(); return; }
+    micOn ? micStop() : micStart();
+  });
+  $("btnEnd").addEventListener("click", function () {
+    if (running) { send({ type: "hangup" }); stop(false); }
+  });
+
+  // --------------------------------------------------------------- canvas
+
+  var cv = $("wave"), ctx = cv.getContext("2d"), phase = 0;
+  function css(v) { return getComputedStyle(document.documentElement).getPropertyValue(v).trim(); }
+  function sizeCanvas() {
+    var dpr = window.devicePixelRatio || 1, r = cv.parentElement.getBoundingClientRect();
+    cv.width = Math.max(1, r.width * dpr); cv.height = Math.max(1, r.height * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+  window.addEventListener("resize", sizeCanvas);
+  function draw() {
+    var w = cv.clientWidth, h = cv.clientHeight, mid = h / 2;
+    ctx.clearRect(0, 0, w, h);
+    var bars = Math.floor(w / 7);
+    ctx.fillStyle = speaker === "a" ? css("--agent")
+                  : speaker === "c" ? css("--cust") : css("--line-strong");
+    for (var i = 0; i < bars; i++) {
+      var amp;
+      if (!speaker) { amp = 2; }
+      else {
+        var s = Math.sin(i * 0.55 + phase) * Math.sin(i * 0.19 + phase * 0.6);
+        amp = Math.max(3, Math.abs(s) * (mid - 8) * (0.4 + 0.6 * Math.abs(Math.sin(phase * 0.9))));
+      }
+      ctx.fillRect(i * 7, mid - amp, 4, amp * 2);
+    }
+    phase += 0.14;
+    requestAnimationFrame(draw);
+  }
+
+  // ------------------------------------------------------------------ boot
+
+  renderRail(); renderGates(); setSpeaker(null); setOrb("idle");
+  loadPersonas(); connect(); sizeCanvas();
+  if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches) draw();
+  else { ctx.fillStyle = css("--line-strong");
+         for (var q = 0; q < Math.floor(cv.clientWidth / 7); q++)
+           ctx.fillRect(q * 7, cv.clientHeight / 2, 4, 3); }
+})();
+</script>

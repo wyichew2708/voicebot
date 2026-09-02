@@ -1,0 +1,35 @@
+# Qwen3-TTS VoiceDesign presets. Pick one with tts.prerender.voice_preset.
+# Regenerate the cache after changing it: make prerender
+voice_presets:
+  m1:   # Male · brisk professional
+    en: >-
+      A Singaporean Chinese man in his thirties, professional call-centre
+      delivery, clear and brisk, neutral Singapore English accent.
+  m2:   # Male · warm, reassuring
+    en: >-
+      A Singaporean Chinese man in his forties, warm and reassuring, unhurried
+      and polite, neutral Singapore English accent.
+  m3:   # Male · younger, upbeat
+    en: >-
+      A Singaporean Chinese man in his late twenties, friendly and upbeat,
+      natural conversational Singapore English.
+  m4:   # Male · soft-spoken
+    en: >-
+      A soft-spoken Singaporean Chinese man, gentle and courteous, measured
+      pace, Singapore English accent.
+  f1:   # Female · warm professional
+    en: >-
+      A Singaporean Chinese woman in her thirties, professional and warm call-
+      centre delivery, clear Singapore English accent.
+  f2:   # Female · bright, energetic
+    en: >-
+      A Singaporean Chinese woman in her twenties, bright and energetic,
+      friendly Singapore English accent.
+  f3:   # Female · calm, authoritative
+    en: >-
+      A Singaporean Chinese woman in her forties, calm and authoritative,
+      composed and articulate, Singapore English accent.
+  f4:   # Female · crisp, efficient
+    en: >-
+      A Singaporean Chinese woman, crisp and efficient call-centre tone, polite
+      but businesslike, Singapore English accent.

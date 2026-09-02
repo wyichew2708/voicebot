@@ -1,0 +1,39 @@
+# Singlish register with a cloned Singaporean voice.
+#
+# Two separate things make this sound Singaporean:
+#
+#   1. WORDS   — register: singlish rewrites the seven scripted turns into
+#                Singapore call-centre English ("correct or not", "already",
+#                "can already"). See src/voicebot/call/script.py.
+#                COMPLIANCE: this rewords the client's approved script. The
+#                figures still come from the fact store, but Etiqa must sign
+#                off the phrasing before it is used on a real call.
+#
+#   2. ACCENT  — no preset voice anywhere in mlx-audio is Singaporean, so the
+#                only route is zero-shot cloning from a reference clip. Point
+#                reference_audio at 10-30 s of clean speech from a Singaporean
+#                speaker and the output takes that speaker's accent.
+#
+# Supply your own clip: a colleague, a licensed recording, or your own voice.
+# Nothing synthetic — cloning a synthetic American voice just returns the
+# American accent you are trying to get away from.
+profile: mlx
+register: singlish
+backend:
+  llm:
+    model: mlx-community/Qwen3.6-35B-A3B-4bit
+    max_tokens: 220
+  asr:
+    model: knoveleng/polyglot-lion-1.7b-v1.5-mlx-8bit
+  tts:
+    model: mlx-community/chatterbox-8bit
+    # Uncomment once you have a clip. Until then this profile falls back to
+    # Kokoro's British voice, which is nearer than American but not Singaporean.
+    # reference_audio: voices/singaporean_reference.wav
+    speed: 1.18
+    voices:
+      en: {voice: bm_george,  code: b}
+      zh: {voice: zf_xiaobei, code: z}
+languages: [en, zh]
+audio:
+  sample_rate: 16000

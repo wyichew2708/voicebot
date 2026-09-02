@@ -1,0 +1,42 @@
+# Apple Silicon / MLX profile.
+profile: mlx
+backend:
+  llm:
+    # Loaded lazily on first free-form generation. Nothing in the current
+    # script calls it, so the demo runs without this 20 GB download.
+    model: mlx-community/Qwen3.6-35B-A3B-4bit
+    max_tokens: 220
+    temperature: 0.3
+  asr:
+    # The Mac ASR choice is still open — see docs/deployments.md. Whisper is
+    # the fallback that definitely works; it is weak on Singlish, and
+    # Polyglot-Lion converted to MLX is the preferred path.
+    model: mlx-community/whisper-large-v3-turbo
+    # The MLX weights repo ships no tokenizer, so the processor comes from
+    # upstream. Without this the first transcription fails with an error that
+    # points nowhere near the cause.
+    processor: openai/whisper-large-v3-turbo
+    # Whisper mangles Singlish particles without a vocabulary hint — "lor" and
+    # "lah" come back as the proper nouns "Lore" and "Law".
+    initial_prompt: >-
+      Singapore English conversation. Common words: lah, lor, leh, meh, hor, ah,
+      sia, aiyah, wah, can or not, already, got, one anot, okay lah, ya lah.
+  tts:
+    model: mlx-community/Kokoro-82M-4bit
+    # A servicing agent talks briskly. 1.0 sounds sluggish on the phone.
+    speed: 1.18
+    # Kokoro does NOT infer its phonemiser from the voice name — pass lang_code
+    # explicitly or Mandarin is routed through the American English pipeline,
+    # which produces roughly 4x the audio and none of it correct.
+    # No Kokoro voice is Singaporean. Singapore English follows British norms
+    # (colonial-era education, British spelling and vowels), so a British voice
+    # lands closer than the American default — "Dave from Etiqa" should not
+    # sound like he is in Ohio. This is the nearest available, not the right
+    # one; a genuinely Singaporean voice needs MERaLiON-TTS or a local voice
+    # actor. See README.
+    voices:
+      en: {voice: bm_george,  code: b}   # a = American English
+      zh: {voice: zf_xiaobei, code: z}   # z = Mandarin
+languages: [en, zh]
+audio:
+  sample_rate: 16000

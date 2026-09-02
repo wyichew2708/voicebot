@@ -1,0 +1,31 @@
+{"caller": "yes, you are right.", "path": "keyword", "note": "a yes should never reach the model"}
+{"caller": "okay, thank you.", "path": "keyword"}
+{"caller": "正确正确", "path": "keyword"}
+{"caller": "好的谢谢", "path": "keyword"}
+{"caller": "呃是的是的", "path": "keyword"}
+{"caller": "可以可以请安排", "path_any": ["keyword", "handoff"], "note": "accepting an offer is keyword-handled; if the offer was for a colleague, the result is a handoff"}
+{"caller": "呃没有收到", "path": "keyword", "not_contains": ["不在我这通续保电话能处理的范围内"]}
+{"caller": "好的你有什么事", "not_contains": ["我叫 Dave"], "contains": ["续保"]}
+{"caller": "呃找我什么事", "not_contains": ["我叫 Dave"]}
+{"caller": "uh, okay, what happen?", "contains_any": ["calling about", "续保"], "note": "that call had already switched to Mandarin"}
+{"caller": "uh, can i request to change my email address?", "contains": ["email address you'd like"], "not_contains": ["on file"]}
+{"caller": "w, y, i, c, h, e, w, alias hotmail dot com.", "contains": ["wyichew@hotmail.com"]}
+{"caller": "uh, you should be able to know.", "contains_any": ["would have to come from you", "is that right"], "not_contains": ["didn't catch"], "note": "spelling now succeeds one turn earlier, so this lands on the read-back"}
+{"caller": "你是机器人吗", "contains": ["自动语音助理"], "not_contains": ["我叫 Dave"]}
+{"caller": "我在问你是不是机器人", "contains": ["自动语音助理"]}
+{"caller": "可以不要打电话给我了吗", "contains": ["不会再打"], "not_contains": ["没问题。"]}
+{"caller": "哈哈哈哈哈哈哈哈", "not_contains": ["客服专员"]}
+{"caller": "why is that?", "not_contains": ["not something I can help with"]}
+{"caller": "what are you trying to say just now?", "not_contains": ["40 percent off"]}
+{"caller": "uh, you didn't hear me.", "not_contains": ["didn't quite catch"]}
+{"caller": "阿基米德的浮力原理", "not_contains": ["customer care", "客服专员"], "note": "recogniser noise on an English call; must not be escalated"}
+{"caller": "其主要城市有圣保罗和里约热内卢。", "not_contains": ["customer care", "客服专员"]}
+{"caller": "他于二零零三年毕业于香港大学政治与行政学系。", "not_contains": ["customer care", "客服专员"]}
+{"caller": "该物种的模式产地在印度。", "not_contains": ["customer care", "客服专员"]}
+{"caller": "my roof is leaking, does that count", "not_contains": ["not something I can help with"]}
+{"caller": "Yes, I received it.", "path": "keyword"}
+{"caller": "Yes, that's the right email.", "path": "keyword"}
+{"caller": "Sure, thank you.", "path": "keyword"}
+{"caller": "uh yes, that is my home.", "path": "keyword", "note": "six words with a filler; the yes cap ignores fillers now"}
+{"caller": "呃什么保险来的", "contains": ["续保"], "path": "keyword"}
+{"caller": "哦将我要做什么咧", "contains_any": ["电邮", "到期日"], "path": "keyword"}

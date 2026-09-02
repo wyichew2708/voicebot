@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.voicebot.console</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>__ROOT__/.venv/bin/python</string>
+    <string>-m</string>
+    <string>voicebot.server</string>
+    <string>--profile</string>
+    <string>mac-polyglot</string>
+    <string>--port</string>
+    <string>8788</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>__ROOT__</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <!-- Model weights live in the user cache; launchd starts with a bare env. -->
+    <key>HOME</key>
+    <string>__HOME__</string>
+    <key>PYTHONUNBUFFERED</key>
+    <string>1</string>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <!-- Restart if it dies, but back off so a crash loop does not spin the GPU. -->
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
+  <key>ThrottleInterval</key>
+  <integer>30</integer>
+
+  <key>StandardOutPath</key>
+  <string>__ROOT__/logs/console.log</string>
+  <key>StandardErrorPath</key>
+  <string>__ROOT__/logs/console.err.log</string>
+
+  <!-- Nice, not aggressive: this shares the machine with whatever else runs. -->
+  <key>ProcessType</key>
+  <string>Interactive</string>
+</dict>
+</plist>

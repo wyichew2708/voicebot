@@ -1,0 +1,364 @@
+"""Turning written slot values into something a voice can say.
+
+Shared by the script renderer and the fact store, because a date read out in
+an answer has to sound the same as the same date read out in a scripted line.
+"""
+from __future__ import annotations
+
+import re
+
+_MONTHS = ("january", "february", "march", "april", "may", "june", "july",
+           "august", "september", "october", "november", "december")
+
+_ONES = ("", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine",
+         "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen",
+         "seventeen", "eighteen", "nineteen")
+_TENS = ("", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy",
+         "eighty", "ninety")
+
+
+def _two_digits(n: int) -> str:
+    if n < 20:
+        return _ONES[n]
+    return _TENS[n // 10] + (f"-{_ONES[n % 10]}" if n % 10 else "")
+
+
+def _spoken_year(year: str) -> str:
+    """"2026" -> "twenty twenty-six".
+
+    The pre-render model reads a bare four-digit year wrong: rendered from the
+    numeral it says "twenty fifty-six", which is a different year from the one
+    on the customer's policy. Written out, it reads correctly. Verified by
+    transcribing the rendered audio back — the numeral form comes back as the
+    wrong year, the spelled form comes back right.
+    """
+    if not (year.isdigit() and len(year) == 4):
+        return year
+    hi, lo = int(year[:2]), int(year[2:])
+    if lo == 0:
+        return f"{_two_digits(hi)} hundred"
+    if lo < 10:
+        return f"{_two_digits(hi)} oh {_ONES[lo]}"
+    return f"{_two_digits(hi)} {_two_digits(lo)}"
+
+
+def _en_date(value: str) -> str:
+    """"10 February 2026" -> "10 February twenty twenty-six"."""
+    parts = value.replace(",", " ").split()
+    if len(parts) != 3:
+        return value
+    day, month, year = parts
+    if month.lower() not in _MONTHS:
+        return value
+    return f"{day} {month} {_spoken_year(year)}"
+
+
+
+
+# --- Mandarin numerals ----------------------------------------------------
+# The pre-render voice reads Arabic digits inside Chinese text as though they
+# were not there: "2026年2月10日" came back from the recogniser as
+# "屯溪区棉亭站". Written out in characters it reads correctly. Same class of
+# fault as the English year, found the same way — transcribing our own audio.
+
+_ZH_DIGITS = "零一二三四五六七八九"
+_ZH_UNITS = ((100_000_000, "亿"), (10_000, "万"), (1_000, "千"),
+             (100, "百"), (10, "十"))
+
+
+def zh_number(n: int, _top: bool = True) -> str:
+    """A cardinal, the way it is said rather than the way it is written.
+
+    Follows the conventions a Singaporean listener expects: 十二 not 一十二,
+    三万五千 not 三十五千, and a 零 wherever a place is skipped.
+
+    `_top` is the difference between 十二 and 四百一十二: the leading 一 is
+    dropped only when 十 opens the number, never inside a larger one.
+    """
+    if n < 0:
+        return "负" + zh_number(-n, _top)
+    if n < 10:
+        return _ZH_DIGITS[n]
+    for value, unit in _ZH_UNITS:
+        if n >= value:
+            head, rest = divmod(n, value)
+            prefix = "" if (_top and value == 10 and head == 1) else zh_number(head, False)
+            if rest == 0:
+                return prefix + unit
+            # A skipped place is spoken as 零: 一百零五, 三万零二十.
+            gap = "零" if rest < value // 10 else ""
+            return prefix + unit + gap + zh_number(rest, False)
+    return _ZH_DIGITS[n]
+
+
+def zh_decimal(value: str) -> str:
+    """"23.5" -> "二十三点五". Digits after the point are read one at a time."""
+    whole, _, frac = value.replace(",", "").partition(".")
+    if not whole.isdigit():
+        return value
+    out = zh_number(int(whole))
+    if frac.isdigit():
+        out += "点" + "".join(_ZH_DIGITS[int(d)] for d in frac)
+    return out
+
+
+def zh_year(year: str) -> str:
+    """Years are read digit by digit: 二零二六年, never 两千零二十六年."""
+    if not (year.isdigit() and len(year) == 4):
+        return year
+    return "".join(_ZH_DIGITS[int(d)] for d in year)
+
+
+def zh_digits(run: str) -> str:
+    """Arabic digits inside a Mandarin line, read one at a time.
+
+    A phone number, a unit number or a policy number is a sequence of digits,
+    not a quantity: 六八八七 八七七七, never 六千八百八十七.
+    """
+    return "".join(_ZH_DIGITS[int(ch)] if ch.isdigit() else ch for ch in run)
+
+
+def zh_inline_numbers(text: str) -> str:
+    """Every Arabic digit in a Mandarin line, spoken as Mandarin.
+
+    Quantities are already written out by the script; what reaches here is
+    the incidental kind — a unit number, a phone number, a policy number —
+    and those are read digit by digit the way anyone reads them aloud. The
+    dashes inside a code become spaces, so it is read as groups rather than
+    as a subtraction.
+    """
+    out = re.sub(r"(?<=[0-9A-Za-z])-(?=[0-9])", " ", text)
+    return re.sub(r"\d", lambda m: _ZH_DIGITS[int(m.group())], out)
+
+
+def zh_date(value: str) -> str:
+    """"10 February 2026" -> "二零二六年二月十日"."""
+    parts = value.replace(",", " ").split()
+    if len(parts) != 3:
+        return value
+    day, month, year = parts
+    if month.lower() not in _MONTHS or not day.isdigit():
+        return value
+    m = _MONTHS.index(month.lower()) + 1
+    return f"{zh_year(year)}年{zh_number(m)}月{zh_number(int(day))}日"
+
+
+# --- mixed scripts --------------------------------------------------------
+# A Chinese sentence with a Singapore address, an email or a policy number in
+# it is two languages, and one voice cannot read both. Rendered wholly in
+# Chinese, "TH-4471-0093" came back from the recogniser as
+# "t h 四 four seven one zero 三 three nine three" — different digits from the
+# ones on the policy. Rendered wholly in English, the Chinese is nonsense.
+# So each run is rendered by the front-end that can read it.
+
+_LATIN_RUN = re.compile(r"[A-Za-z0-9@#][A-Za-z0-9@#._\-+/,' ]*[A-Za-z0-9@#.]|[A-Za-z0-9@#]")
+
+
+_HAS_SPEECH = re.compile(r"[A-Za-z0-9\u4e00-\u9fff]")
+
+
+#: Brand and product names that stay English inside a Mandarin line. "Etiqa"
+#: and "Tiq Home" are what is printed on the policy and on the letter in the
+#: customer's hand; a Mandarin rendering is a company and a product they have
+#: never heard of.
+#:
+#: The product is listed as the whole name, never the bare "Tiq". Three
+#: letters alone did not survive the seam — the recogniser lost it in two
+#: Mandarin lines out of three — where "Tiq Home" and "Tiq Personal Accident"
+#: are long enough to hold. The Mandarin script is worded to match.
+_ENGLISH_TERMS = ("etiqa", "tiq home", "tiq personal accident")
+
+
+def _NEEDS_ENGLISH(run: str) -> bool:
+    """Whether this run is worth a seam.
+
+    A Mandarin call is spoken in Mandarin, digits included — 六八八七 rather
+    than an English voice cutting in to read a phone number. Three things
+    earn the seam anyway: an email address, the brand, and the property
+    address, because all three are read back against something written down.
+    """
+    if "@" in run:
+        return True
+    if run.strip().strip(".,;:!?").lower() in _ENGLISH_TERMS:
+        return True
+    # Everything else stays in Mandarin. The Chinese voice reads a couple of
+    # letters perfectly well — "TH 四四七一" comes back verbatim — and pulling
+    # them out made it worse, not better: "T H" alone was too short a
+    # fragment and the model filled it with invented speech
+    # ("t h money and so trusted 四四七一零零九三").
+    letters = sum(1 for ch in run if ch.isalpha() and ch.isascii())
+    return letters >= 6                  # a phrase or an address, not a name
+_CODE = re.compile(r"^[A-Za-z]{1,4}[-\s]?\d{2,}(?:[-\s]?\d+)*$")
+_DIGITS_ONLY = re.compile(r"^[#\d][\d\s\-#]*$")
+
+
+def spell_identifier(run: str, lang: str = "en") -> str:
+    """A policy number or an email address, the way a person reads one out.
+
+    Handed over whole, the voice loses characters and invents others:
+    "TH-4471-0093" came back as "t h 四 four seven one zero 三 three nine
+    three" — different digits from the ones on the policy, spoken to the
+    customer as though they were theirs.
+    """
+    if "@" in run:
+        local, _, domain = run.partition("@")
+        said = " dot ".join(_spell_word(w) for w in local.split("."))
+        return f"{said} at " + " dot ".join(_spell_word(w) for w in domain.split("."))
+    if lang == "zh":
+        # Letters stay letters — there is no Mandarin for "T H" — but the
+        # digits beside them are Mandarin like everything else in the line.
+        return " ".join(zh_digits(ch) if ch.isdigit() else ch
+                        for ch in run if ch.isalnum())
+    if _CODE.match(run):
+        return " ".join(ch for ch in run.upper() if ch.isalnum())
+    # A phone number, a unit number, a reference: four or more digits and
+    # nothing else to go on. Read as a quantity it becomes something else
+    # entirely — "6887 8777" came back as "sixteen eight seven".
+    if _DIGITS_ONLY.match(run) and sum(ch.isdigit() for ch in run) >= 4:
+        return " ".join(ch for ch in run if ch.isdigit())
+    return run
+
+
+def _spell_word(word: str) -> str:
+    """Letter by letter for an initialism, whole for something pronounceable."""
+    if len(word) <= 3 and not any(v in word.lower() for v in "aeiou"):
+        return " ".join(word)
+    return word
+
+
+def _fragments(run: str, lang: str) -> list[tuple[str, str]]:
+    """One latin run, split into the pieces each voice can actually say.
+
+    An email goes to the English voice whole — its letters and dots are one
+    thing and cutting it up would read as a stammer. Anything else is split
+    into letters and digits, so a Mandarin call says 四四七一 in Mandarin and
+    only the "T H" comes from elsewhere.
+    """
+    if "@" in run:
+        return [(spell_identifier(run), "en")]
+    if lang != "zh":
+        return [(spell_identifier(run), "en")]
+
+    if _CODE.match(run):
+        # A policy number is letters plus digits, and the digits belong to the
+        # Mandarin voice: "TH 四四七一 零零九三".
+        out: list[tuple[str, str]] = []
+        for m in re.finditer(r"[A-Za-z]+|\d+", run):
+            piece = m.group()
+            if piece[0].isdigit():
+                out.append((zh_digits(piece), "zh"))
+            else:
+                out.append((_spell_word(piece) if piece.isupper() else piece, "en"))
+        return out or [(run, "en")]
+
+    # An address or the brand: one voice, whole. Split the same way as a code,
+    # "Jurong West Street 4, #08-212" comes out as an English street followed
+    # by Mandarin numerals — an address in neither language, and not the one
+    # the customer would read off their own letter.
+    return [(run, "en")]
+
+
+_UNIT = re.compile(r"#(\d+)\s*-\s*(\d+)")
+#: A floor and unit are read as digits: "#08-212" is "zero eight, two one
+#: two". "Oh eight" is how a phone number is read, not an address, and a
+#: customer checking it against their letter should hear the digit.
+_DIGIT_WORD = ("zero", "one", "two", "three", "four", "five",
+               "six", "seven", "eight", "nine")
+
+
+def spoken_address(text: str) -> str:
+    """"#08-212" -> "unit zero eight, two one two".
+
+    The "#" of a Singapore unit number has no reading, and the voice invents
+    one: "#08-212" came back from the recogniser as "neiro eight two one two"
+    — a floor and a unit the customer does not live on. Spelled out it comes
+    back exactly. Applies to English and Mandarin alike: the address is the
+    one thing on the call read back against a letter in someone's hand.
+    """
+    def _spell(run: str) -> str:
+        return " ".join(_DIGIT_WORD[int(ch)] for ch in run)
+
+    return _UNIT.sub(lambda m: f"unit {_spell(m.group(1))}, {_spell(m.group(2))}",
+                     text)
+
+
+_ZERO_TO_NINE = ("zero", "one", "two", "three", "four", "five",
+                 "six", "seven", "eight", "nine")
+_EMAIL = re.compile(r"\S+@\S+\.\S+")
+_POLICY = re.compile(r"\b[A-Za-z]{1,4}-\d{2,}(?:-\d+)*\b")
+_PHONE = re.compile(r"\b\d{4}\s\d{4}\b")
+
+
+def spoken_identifiers(text: str) -> str:
+    """Read a number back the way a person reads one out, in English.
+
+    The Mandarin path has done this since the policy number came back as
+    different digits from the ones on the policy. English never did, and it
+    is just as wrong there: "TH-4471-0093" was heard back as "t h four four
+    seven one zero nine three" — one zero short — "wm.tan@example.sg" as
+    "w m two ten at example dot x a", and the callback number "6887 8777" as
+    "sixteen eight eight seven eight seven seven seven eight seven seven",
+    which is not a number anyone can dial.
+    """
+    def _digits(run: str) -> str:
+        return " ".join(_ZERO_TO_NINE[int(ch)] if ch.isdigit() else ch
+                        for ch in run if ch != " ")
+
+    text = _EMAIL.sub(lambda m: spell_identifier(m.group()), text)
+    text = _POLICY.sub(
+        lambda m: " ".join(_spell_word(part) if part.isalpha() else _digits(part)
+                           for part in re.split(r"[-\s]", m.group()) if part),
+        text)
+    return _PHONE.sub(lambda m: _digits(m.group()), text)
+
+
+def segment_by_script(text: str, lang: str) -> list[tuple[str, str]]:
+    """[(fragment, language)] for a line that mixes scripts.
+
+    Only splits for a non-latin target language. A Mandarin call is spoken in
+    Mandarin — digits included, because 六八八七 is what a Mandarin speaker
+    says and an English voice cutting in to read a phone number is not. The
+    exception is letters, which have no Mandarin reading: an email address
+    and a policy prefix go to the English voice and nothing else does.
+    """
+    if not text:
+        return [(text, lang)]
+    text = spoken_address(text)
+    if lang == "en":
+        return [(spoken_identifiers(text), lang)]
+    out: list[tuple[str, str]] = []
+    last = 0
+    for m in _LATIN_RUN.finditer(text):
+        run = m.group().strip()
+        # The Chinese front-end reads a short name perfectly well — "Tan先生"
+        # comes back as 谭先生 — and every seam is a join the ear can hear:
+        # pulled out on its own, "Dave" rendered as "dave dave concentration".
+        if len(run) < 2 or not _NEEDS_ENGLISH(run):
+            continue
+        head = text[last:m.start()]
+        if _HAS_SPEECH.search(head):
+            out.append((head, lang))
+        out.extend(_fragments(run, lang))
+        last = m.end()
+    tail = text[last:]
+    if _HAS_SPEECH.search(tail):
+        out.append((tail, lang))
+    elif out and tail.strip():
+        # Punctuation with nothing to say. Rendered on its own the model
+        # invents a sentence to fill it — a trailing "。" produced several
+        # seconds of speech that was never in the script.
+        out[-1] = (out[-1][0] + tail, out[-1][1])
+    if not out:
+        out = [(text, lang)]
+    # Any digit left on the Mandarin side is spoken as Mandarin.
+    out = [(zh_inline_numbers(frag) if flang == "zh" else frag, flang)
+           for frag, flang in out]
+    # Neighbours in the same language are one fragment: "四四七一" and
+    # "零零九三" are one number, and a seam between them is a stumble.
+    merged: list[tuple[str, str]] = []
+    for frag, flang in out:
+        if merged and merged[-1][1] == flang:
+            merged[-1] = (merged[-1][0] + frag, flang)
+        else:
+            merged.append((frag, flang))
+    return merged

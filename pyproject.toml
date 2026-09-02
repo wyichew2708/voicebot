@@ -1,0 +1,45 @@
+[project]
+name = "voicebot"
+version = "0.1.0"
+description = "Multilingual outbound insurance voicebot — Tiq Home renewal servicing"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "pyyaml>=6.0",
+    "numpy>=1.26",
+]
+
+[project.optional-dependencies]
+# Apple Silicon inference path. Installed separately — see README.
+# The misaki/spacy/espeak chain is not optional: Kokoro's grapheme-to-phoneme
+# step pulls it in lazily and fails at first synthesis, not at import, so a
+# missing piece looks like a runtime bug rather than a setup step.
+mlx = [
+    "mlx>=0.21",
+    "mlx-lm>=0.20",
+    "mlx-audio>=0.5",
+    "misaki[zh]>=0.9",       # G2P for Kokoro; [zh] adds pypinyin + jieba
+    "num2words>=0.5",        # misaki.en
+    "spacy>=3.8",            # misaki.en  (also needs: spacy download en_core_web_sm)
+    "phonemizer-fork>=3.3",  # misaki.espeak
+    "espeakng-loader>=0.2",  # misaki.espeak
+]
+dev = [
+    "pytest>=8.0",
+    "httpx>=0.27",
+]
+
+[project.scripts]
+voicebot = "voicebot.server:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/voicebot"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

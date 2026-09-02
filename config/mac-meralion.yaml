@@ -1,0 +1,34 @@
+# Mac profile using MERaLiON for ASR via the sidecar.
+#
+# MERaLiON is the only model here that is actually trained on Singlish, Malay
+# and Singapore Mandarin. On Apple Silicon it runs on the MPS backend at
+# roughly 6-13 s per utterance, which is accurate-but-not-conversational —
+# use this profile for accuracy work, not for a live demo. On the RHEL box
+# with vLLM it is a different proposition entirely.
+#
+# Start the sidecar first:  make meralion
+profile: mlx
+backend:
+  llm:
+    model: mlx-community/Qwen3.6-35B-A3B-4bit
+    max_tokens: 220
+  asr:
+    sidecar: http://127.0.0.1:8801
+    # Fallback if the sidecar is down.
+    model: mlx-community/whisper-large-v3-turbo
+    processor: openai/whisper-large-v3-turbo
+  tts:
+    model: mlx-community/Kokoro-82M-4bit
+    speed: 1.18
+    # No Kokoro voice is Singaporean. Singapore English follows British norms
+    # (colonial-era education, British spelling and vowels), so a British voice
+    # lands closer than the American default — "Dave from Etiqa" should not
+    # sound like he is in Ohio. This is the nearest available, not the right
+    # one; a genuinely Singaporean voice needs MERaLiON-TTS or a local voice
+    # actor. See README.
+    voices:
+      en: {voice: bm_george,  code: b}
+      zh: {voice: zf_xiaobei, code: z}
+languages: [en, zh]
+audio:
+  sample_rate: 16000
