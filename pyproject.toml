@@ -25,6 +25,11 @@ mlx = [
     "phonemizer-fork>=3.3",  # misaki.espeak
     "espeakng-loader>=0.2",  # misaki.espeak
 ]
+# Ingesting source documents into the knowledge bundle. Build-time only: the
+# served bundle is markdown and CSV, so nothing here is needed at runtime.
+knowledge = [
+    "pypdf>=6.0",
+]
 dev = [
     "pytest>=8.0",
     "httpx>=0.27",

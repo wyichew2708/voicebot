@@ -1,0 +1,120 @@
+# Source manifest for the OKF bundle.
+#
+# Every document the wiki is allowed to cite is declared here first. The
+# ingest step copies it into `raw/` with a content hash and page markers; a
+# claim in the wiki cites a `raw/` path plus a page, and the linter fails a
+# claim that does not.
+#
+# `authority` is the conflict-resolution order from the design doc. When two
+# sources disagree, the higher authority wins the page and the disagreement
+# is filed in `conflicts/` as a defect against the lower source. Ranks:
+#
+#   policy_wording  > product_summary > rate_table > faq
+#                   > web_etiqa > web_tiq > promotion > marketing
+#
+# `jurisdiction` is load-bearing, not decoration. Etiqa Insurance Pte. Ltd.
+# (Singapore, UEN 201331905K) and Etiqa General Insurance Berhad (Malaysia)
+# are different underwriters selling differently-worded products under one
+# brand. A Singapore page may never cite a Malaysian source; the linter
+# enforces it. This is the single most likely way for this corpus to produce
+# a confidently wrong answer to a Singapore customer.
+
+sources:
+
+  # --- Singapore: Etiqa Insurance Pte. Ltd. -------------------------------
+
+  - file: ~/Downloads/Tiq-Travel-Covid-19-Policy-Wording (1).pdf
+    dest: raw/wordings/tiq-travel-2024-02-05-v8.md
+    title: Tiq Travel Insurance policy wording, Version 8
+    publisher: Etiqa Insurance Pte. Ltd.
+    jurisdiction: SG
+    authority: policy_wording
+    document_version: "8"
+    effective_from: 2024-02-05
+    effective_to: null
+
+  - file: ~/Downloads/Tiq-Travel-COVID-19-Policy-Wording.pdf
+    dest: raw/wordings/tiq-travel-2023-07-06-v7.md
+    title: Tiq Travel Insurance policy wording, Version 7
+    publisher: Etiqa Insurance Pte. Ltd.
+    jurisdiction: SG
+    authority: policy_wording
+    document_version: "7"
+    effective_from: 2023-07-06
+    effective_to: 2024-02-04          # superseded by v8; kept for in-force policies
+
+  - file: ~/Downloads/Tiq-Travel-COVID-19-Add-on-FAQ.pdf
+    dest: raw/faq/tiq-travel-covid19-addon.md
+    title: Tiq Travel COVID-19 Add-on, Frequently Asked Questions
+    publisher: Etiqa Insurance Pte. Ltd.
+    jurisdiction: SG
+    authority: faq
+    document_version: null
+    effective_from: null
+    effective_to: null
+
+  - file: ~/Downloads/Tiq-Travel-FAQ-FREETRAVEL.pdf
+    dest: raw/promotions/tiq-travel-freetravel-faq-2023.md
+    title: Tiq Travel FREE TRAVEL Campaign 2023, FAQ
+    publisher: Etiqa Insurance Pte. Ltd.
+    jurisdiction: SG
+    authority: promotion
+    document_version: null
+    effective_from: 2023-12-01
+    effective_to: 2023-12-31
+
+  - file: ~/Downloads/Tiq-Travel-TC-1-Dec-31-Dec-2023-FREETRAVEL.pdf
+    dest: raw/promotions/tiq-travel-freetravel-tc-2023.md
+    title: Tiq Travel FREE TRAVEL Campaign 2023, Terms and Conditions
+    publisher: Etiqa Insurance Pte. Ltd.
+    jurisdiction: SG
+    authority: promotion
+    document_version: "24 October 2023"
+    effective_from: 2023-12-01
+    effective_to: 2023-12-31
+
+  # --- Malaysia: a different underwriter. Quarantined on purpose. ---------
+  # Ingested so the corpus is honest about what exists on the shelf, and so
+  # the jurisdiction gate has something real to refuse. "Etiqa MY Home FAQs"
+  # is the most dangerous file in this list: it is the only home-insurance
+  # document available anywhere, and the bot sells Singapore home insurance.
+
+  - file: ~/Downloads/Etiqa my /Etiqa MY Home FAQs.pdf
+    dest: raw/non-sg/etiqa-my-home-faq.md
+    title: Etiqa Malaysia Home insurance FAQs
+    publisher: Etiqa General Insurance Berhad (Malaysia)
+    jurisdiction: MY
+    authority: faq
+    document_version: null
+    effective_from: null
+    effective_to: null
+
+  - file: ~/Downloads/Etiqa my /Etiqa MY Personal Accident FAQs.pdf
+    dest: raw/non-sg/etiqa-my-personal-accident-faq.md
+    title: Etiqa Malaysia Personal Accident insurance FAQs
+    publisher: Etiqa General Insurance Berhad (Malaysia)
+    jurisdiction: MY
+    authority: faq
+    document_version: null
+    effective_from: null
+    effective_to: null
+
+  - file: ~/Downloads/Etiqa my /Etiqa MY Travel FAQs.pdf
+    dest: raw/non-sg/etiqa-my-travel-faq.md
+    title: Etiqa Malaysia Travel insurance FAQs
+    publisher: Etiqa General Insurance Berhad (Malaysia)
+    jurisdiction: MY
+    authority: faq
+    document_version: null
+    effective_from: null
+    effective_to: null
+
+  - file: ~/Downloads/Etiqa my /Etiqa MY General FAQs.pdf
+    dest: raw/non-sg/etiqa-my-general-faq.md
+    title: Etiqa Malaysia General FAQs (hotlines, claims, servicing)
+    publisher: Etiqa General Insurance Berhad (Malaysia)
+    jurisdiction: MY
+    authority: faq
+    document_version: null
+    effective_from: null
+    effective_to: null

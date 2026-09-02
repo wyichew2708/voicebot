@@ -14,6 +14,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from voicebot import config                                   # noqa: E402
+from voicebot.knowledge import policy as knowledge_policy
 from voicebot.voices import CustomVoices                       # noqa: E402
 from voicebot.runtime import warm                              # noqa: E402
 from voicebot.runtime.prerender import PrerenderCache         # noqa: E402
@@ -51,7 +52,11 @@ def main() -> None:
     if not voices:
         sys.exit(f"no voices to render: profile has {list(cache.voices())}")
 
-    jobs = warm.plan(langs, args.registers, voices)
+    # Same knowledge policy the server will run under, so the pre-render pass
+    # and the console agree on which coverage answers exist.
+    serving = knowledge_policy.configure(cfg)
+    print(f"knowledge: {serving.describe}")
+    jobs = warm.plan(langs, args.registers, voices, serving)
     todo = warm.outstanding(cache, jobs, args.force)
     print(f"{len(jobs)} distinct lines, {len(todo)} to render "
           f"({len(jobs)-len(todo)} already cached)")

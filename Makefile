@@ -1,4 +1,4 @@
-.PHONY: setup dev run test models clean
+.PHONY: setup dev run test models clean kb-ingest kb-lint kb-status kb-sources kb-ask
 
 VENV := .venv
 PY   := $(VENV)/bin/python
@@ -31,6 +31,27 @@ eval:                 ## replay every recorded call through the engine (keyword 
 
 eval-live:            ## the same, with the models in the loop — reports guardrail latency
 	$(PY) scripts/eval.py --live
+
+# ------------------------------------------------------------- knowledge base
+# The OKF bundle in knowledge/. See docs/knowledge-layer.md.
+
+kb-ingest:            ## re-extract source documents into knowledge/raw/
+	$(PY) scripts/kb_ingest.py
+
+kb-check:             ## have any ingested source documents changed underneath us?
+	$(PY) scripts/kb_ingest.py --check
+
+kb-lint:              ## the gate: citations, locators, jurisdiction, figures, links
+	$(PY) scripts/kb.py lint
+
+kb-status:            ## which pages are approved and which are not
+	$(PY) scripts/kb.py status
+
+kb-sources:           ## the ingested documents, with hashes
+	$(PY) scripts/kb.py sources
+
+kb-ask:               ## answer a question the way a call would:  make kb-ask Q="free look" PROFILE=rhel
+	$(PY) scripts/kb.py ask "$(Q)" $(if $(PROFILE),--profile $(PROFILE),) $(if $(LANG_),--lang $(LANG_),)
 
 clean:
 	rm -rf $(VENV) .pytest_cache **/__pycache__

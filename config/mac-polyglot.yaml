@@ -134,3 +134,20 @@ audio:
 guardrail:
   enabled: true
   timeout_ms: 2500
+
+# --- knowledge bundle ------------------------------------------------------
+# See knowledge/okf.yaml and docs/knowledge-layer.md.
+#
+# This is the demo machine, so it speaks the placeholder home-insurance
+# wording that used to live in the fact store. Those two answers cite nothing:
+# no Singapore home policy document has been ingested, and until one is, they
+# describe what "contents" and "renovation" ordinarily mean rather than what
+# this policy actually covers.
+#
+# `refuse` is the setting for anything a real customer will hear.
+knowledge:
+  jurisdiction: SG
+  products:
+    - product/general/home
+    - product/protection/personal-accident
+  unsourced_answers: allow

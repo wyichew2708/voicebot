@@ -34,20 +34,14 @@ CROSS_SELL = {
                              "最高两千新币的住院医疗费用"),
 }
 
-# Coverage answers are grounded here rather than generated.
-# Anything not in this table must escalate rather than be improvised.
-COVERAGE_QA = {
-    "renovation": {
-        "en": "Renovation cover applies to fixtures and fittings you have installed, "
-              "such as flooring, built-in cabinetry and wiring.",
-        "zh": "装修保障涵盖您安装的固定装置，例如地板、订制橱柜和电线。",
-    },
-    "contents": {
-        "en": "Home contents cover applies to your movable belongings — furniture, "
-              "appliances and personal effects.",
-        "zh": "家庭财物保障涵盖您的可移动物品，例如家具、电器和个人物品。",
-    },
-}
+# Coverage answers used to live here as a two-entry table with no source
+# behind either entry. They now live in the OKF bundle under
+# knowledge/wiki/product/general/home/, where they are marked draft and
+# unsourced, and where a deployment can refuse to speak them. Keeping a copy
+# here as well would be a second source of truth, which is the failure the
+# bundle exists to prevent.
+#
+# See coverage_lookup() below and docs/knowledge-layer.md.
 
 # Questions that are advice, not fact. These escalate to a licensed human.
 ADVICE_TRIGGERS = (
@@ -224,16 +218,37 @@ def spoken_email(text: str) -> str | None:
         r"[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}", candidate) else None
 
 
-def coverage_answer(text: str, lang: str) -> str | None:
-    low = text.lower()
-    for key, ans in COVERAGE_QA.items():
-        if key in low or (key == "renovation" and "renovat" in low) or (key == "contents" and "content" in low):
-            return ans.get(lang, ans["en"])
-    if "装修" in text:
-        return COVERAGE_QA["renovation"]["zh"]
-    if "财物" in text or "家具" in text:
-        return COVERAGE_QA["contents"]["zh"]
-    return None
+def coverage_lookup(text: str, lang: str, serving=None):
+    """A coverage answer from the knowledge bundle, or None.
+
+    Deterministic throughout: a frontmatter filter and an alias match, both
+    ordinary code. The bundle returns pre-approved wording verbatim or nothing
+    at all, so this cannot invent a benefit any more than the old table could.
+
+    What it adds over the table it replaced is provenance. Every answer names
+    the page and the source document behind it, a Singapore call can never be
+    answered from a Malaysian document, and a deployment can refuse wording
+    that has no source at all -- which today is all of the home-insurance
+    wording, because no home policy document has been ingested.
+    """
+    from ..knowledge import lookup
+    from ..knowledge.policy import default_serving
+
+    s = serving or default_serving()
+    try:
+        return lookup(text, lang, jurisdiction=s.jurisdiction,
+                      allow_unsourced=s.allow_unsourced, products=s.products)
+    except Exception:                                    # pragma: no cover
+        # A malformed bundle must not take a live call down with it. Losing
+        # coverage answers costs a callback; raising here drops the call.
+        import logging
+        logging.getLogger(__name__).exception("knowledge lookup failed")
+        return None
+
+
+def coverage_answer(text: str, lang: str, serving=None) -> str | None:
+    found = coverage_lookup(text, lang, serving)
+    return found.text if found is not None else None
 
 
 # --- questions about the caller's own record ------------------------------

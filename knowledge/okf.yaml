@@ -1,0 +1,64 @@
+# OKF bundle manifest.
+#
+# The knowledge is code: it lives in git, it is reviewed in a diff, and it is
+# linted in CI. `make kb-lint` is the gate.
+#
+# Layout
+#   raw/              immutable, content-addressed source documents. Never
+#                     edited by hand or by a model. Cited by path and page.
+#   wiki/             compiled pages. Path is identity. Frontmatter is the
+#                     pre-read filter. `spoken:` is the only wording the bot
+#                     is permitted to say.
+#   benefit-tables/   every figure, as CSV. Numbers live nowhere else.
+#   conflicts/        source disagreements awaiting a human. A conflict is a
+#                     defect against the source, not against the wiki.
+#   evals/            golden and adversarial cases, versioned with the pages.
+
+okf_version: "0.1"
+bundle: etiqa-sg-knowledge
+title: Etiqa Singapore knowledge bundle
+version: "0.1.0"
+compiled_at: 2026-09-03
+jurisdiction: SG
+underwriter: Etiqa Insurance Pte. Ltd.
+uen: "201331905K"
+
+# Conflict resolution. Higher rank wins the page; the loser is filed as a
+# defect against the source.
+authority_order:
+  - policy_wording
+  - product_summary
+  - rate_table
+  - faq
+  - web_etiqa
+  - web_tiq
+  - promotion
+  - marketing
+
+taxonomy:
+  - product        # a thing that is sold
+  - concept        # free look, excess, pre-existing condition
+  - journey        # buy, renew, claim, change details
+  - channel        # tiq-sg, etiqa-sg
+  - entity         # the underwriter, regulators
+  - promotion      # short-lived, hard TTL, never compiled into product pages
+
+# Rules the linter enforces. Each one exists because breaking it produces a
+# specific wrong answer to a real customer.
+rules:
+  citation_required: true      # no inline ref -> cannot be approved
+  locators_required: true      # a citation names a page number
+  jurisdiction_isolation: true # an SG page may not cite an MY source
+  figures_in_tables_only: true # no money in prose or spoken wording
+  promotions_need_ttl: true
+  approved_needs_review_due: true
+
+# How the call engine reads this bundle. `unsourced_answers` is the switch
+# that matters: with `refuse`, only pages backed by an ingested source may be
+# spoken, and everything else becomes a callback from a colleague.
+serving:
+  jurisdiction: SG
+  products:
+    - product/general/home
+    - product/protection/personal-accident
+  unsourced_answers: refuse

@@ -139,9 +139,17 @@ In rough order of what would bite first on a real line.
 3. **The recogniser on Singlish.** Polyglot-Lion is the Mac substitute;
    MERaLiON on the GPU box is the model actually trained on it. Accuracy on
    real Singaporean callers is unmeasured until the box runs.
-4. **Facts.** `data/facts.py` is placeholder policy wording. Coverage answers
-   must come from Etiqa's own documents before any real call, or every
-   coverage question should go to a person.
+4. **Facts.** Coverage answers now come from the OKF bundle in `knowledge/`,
+   which cites a source document and a page number for every approved answer,
+   and refuses to let a Singapore page cite a Malaysian one. The gap that
+   remains is the corpus, not the machinery: nothing in it describes Singapore
+   home insurance, which is the product this bot sells. Those pages are drafts
+   carrying the old placeholder wording, the RHEL profile refuses to speak
+   them, and a coverage question there becomes a callback from a colleague.
+   Ingest Etiqa's home wording, product summary and rate table and the same
+   deployment starts answering with citations, no code change. See
+   `docs/knowledge-layer.md`. The cross-sell figures are still placeholders in
+   `data/facts.py` and are the next thing to move into a benefit table.
 5. **Prompt caching** on the router — see above. One change, 3.3× on the
    slowest turn type.
 6. **The live eval needs the GPU box.** On this Mac it only runs with the

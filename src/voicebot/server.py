@@ -26,6 +26,7 @@ from .data import personas
 from .audio_gate import is_plausible, is_speech
 from .call import router
 from .events import INTERNAL_KINDS, AgentAudio
+from .knowledge import policy as knowledge_policy
 from .pcm import trim as trim_silence
 from .recording import Recorder
 from .runtime import load_backend
@@ -56,6 +57,12 @@ def _backend():
         VOICES.merge_into(cfg.get("backend", {}).get("tts", {})
                              .setdefault("prerender", {}))
         _state["cfg"] = cfg
+        # Resolved once, here, so that every call in this process agrees about
+        # whether unsourced wording may be spoken. Logged because it is the
+        # setting most likely to differ between the demo and production, and
+        # the one whose effect on a transcript is easiest to misread as a bug.
+        serving = knowledge_policy.configure(cfg)
+        log.info("Knowledge bundle: %s", serving.describe)
         log.info("Loading backend profile=%s", cfg.get("profile"))
         _state["backend"] = load_backend(cfg)
     return _state["backend"]
@@ -137,6 +144,7 @@ async def health() -> JSONResponse:
         "on_call": _on_call(),
         "voices": _voice_options(),
         "default_voice": _default_voice(),
+        "knowledge": knowledge_policy.default_serving().describe,
     })
 
 
@@ -163,7 +171,8 @@ def _warm_from_cache(vid: str) -> dict:
     cfg = _state["cfg"]
     cache = PrerenderCache(_prerender_cfg(), cfg["audio"]["sample_rate"])
     jobs = warmup_plan.plan(cfg.get("languages", ["en"]),
-                            ["standard", "singlish"], [vid])
+                            ["standard", "singlish"], [vid],
+                            knowledge_policy.default_serving())
     missing = len(warmup_plan.outstanding(cache, jobs))
     return {"done": len(jobs) - missing, "total": len(jobs),
             "state": "done" if not missing else "cold", "detail": ""}
@@ -493,7 +502,8 @@ async def ws(sock: WebSocket) -> None:
                                       register=register, voice=voice,
                                       guardrail=guard.get("enabled", True),
                                       guardrail_timeout_ms=guard.get(
-                                          "timeout_ms", 1500))
+                                          "timeout_ms", 1500),
+                                      knowledge=knowledge_policy.default_serving())
                 record = RECORDER.start(policy_id=policy.policy_id, name=policy.name,
                                         register=register, voice=voice, lang=lang)
                 if not counted:

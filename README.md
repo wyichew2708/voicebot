@@ -553,10 +553,16 @@ src/voicebot/
   data/
     personas.py     synthetic CRM (no real policyholder data, ever)
     facts.py        versioned product fact store
+  knowledge/        reads the OKF bundle; deterministic, never generates prose
+    okf.py          pages, frontmatter, benefit tables
+    answer.py       frontmatter filter + alias match -> approved wording
+    lint.py         the gate: citations, jurisdiction, figures, links
+    policy.py       whether this deployment may speak unsourced wording
   events.py         the event vocabulary the console renders
   server.py         FastAPI + websocket
 ui/demo-console.html  operator console — live over websocket, or self-simulating
 config/               mock.yaml, mac.yaml
+knowledge/            the OKF bundle: raw sources, compiled wiki, benefit tables
 ```
 
 ## The two things this codebase is opinionated about
@@ -609,8 +615,16 @@ whose failure matters most.
 - **Malay speech output is on hold** pending a TTS licence. Malay *understanding* is live and routes
   to a human.
 - **No telephony.** Browser only. SIP is the RHEL build's job.
-- **Product figures in `data/facts.py` are placeholders.** Repopulate from Etiqa's own policy wording
-  and rate card before this touches anything real.
+- **The product this bot sells has no policy document.** Coverage answers now come from the OKF
+  bundle in `knowledge/`, where every approved answer cites a source. Nothing describes Singapore
+  home insurance, so its pages are drafts carrying the old placeholder wording. The demo profile
+  speaks them; the RHEL profile refuses them and offers a colleague. See
+  [docs/knowledge-layer.md](docs/knowledge-layer.md) and
+  `knowledge/conflicts/0001-no-sg-home-wording.md`.
+- **Cross-sell figures in `data/facts.py` are still placeholders.** The discount, the starting
+  premium and the inpatient limit are the numbers most likely to be quoted on a call and the ones
+  with the least evidence behind them. Repopulate from Etiqa's rate card before this touches
+  anything real.
 - **The DNC reading is not legal advice.** Confirm with counsel before dialling a real number.
 - **Latency figures in mock/typed mode exclude ASR and endpointing**, because neither runs — you are
   typing, not speaking. The clock starts when the caller's audio arrives, so the number is honest for

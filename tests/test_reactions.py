@@ -456,7 +456,7 @@ def test_the_fallback_runs_last_so_every_handler_gets_a_chance():
     body = src[src.index("async def on_caller"):src.index("# ------------------------------------------------------------ advance")]
     assert body.index("self._routed(text)") > body.index("check_advice(text)"), \
         "the fallback runs before the advice gate again"
-    assert body.index("self._routed(text)") > body.index("coverage_answer(text"), \
+    assert body.index("self._routed(text)") > body.index("coverage_lookup(text"), \
         "the fallback runs before the coverage answers again"
     assert body.index("self._routed(text)") > body.index("is_price_request(text)"), \
         "the fallback runs before the price handler again"

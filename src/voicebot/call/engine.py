@@ -15,7 +15,8 @@ from typing import AsyncIterator
 
 from ..compliance.gates import (CallState, Gates, check_advice, check_dnc,
                                 check_identity, may_cross_sell)
-from ..data.facts import (RENEWAL_PROCESS, coverage_answer, is_advice_request,
+from ..knowledge.policy import Serving, default_serving
+from ..data.facts import (RENEWAL_PROCESS, coverage_lookup, is_advice_request,
                           is_price_request, is_procedure_request, policy_answer,
                           policy_topic, price_answer, spoken_email,
                           wants_email_change)
@@ -394,7 +395,8 @@ class CallSession:
     def __init__(self, policy: Policy, backend: Backend, lang: str | None = None,
                  part_of_day: str = "afternoon", register: str = "standard",
                  voice: str | None = None, guardrail: bool = True,
-                 guardrail_timeout_ms: int = 1500) -> None:
+                 guardrail_timeout_ms: int = 1500,
+                 knowledge: "Serving | None" = None) -> None:
         # Start of the current turn, used to report time-to-first-audio the way
         # the console labels it: from the caller finishing to the agent
         # speaking, not just the cost of synthesis.
@@ -415,6 +417,11 @@ class CallSession:
         # call: swapping speaker mid-conversation is as jarring as swapping
         # language.
         self.voice = voice
+        # How this deployment may use the knowledge bundle. The demo speaks
+        # unsourced placeholder wording; anything heading for a real customer
+        # refuses it and offers a colleague instead. Resolved once per call so
+        # a config reload cannot change the rules halfway through one.
+        self.knowledge = knowledge if knowledge is not None else default_serving()
         # Consecutive turns heard in another language. One is not evidence.
         self._other_lang_turns = 0
         # Email correction sub-dialogue: None | "listening" | "confirming"
@@ -1040,11 +1047,13 @@ class CallSession:
             return
 
         # ---- off-script: factual coverage question --------------------
-        answer = coverage_answer(text, self.lang)
-        if answer:
+        # The citation goes into the call record. A coverage answer nobody can
+        # trace afterwards is barely better than one that was guessed.
+        found = coverage_lookup(text, self.lang, self.knowledge)
+        if found is not None:
             self._clarifies = 0
-            yield ToolCall(tool="policy.coverage_lookup", arg="policy wording")
-            async for ev in self._generated(answer):
+            yield ToolCall(tool="policy.coverage_lookup", arg=found.citation)
+            async for ev in self._generated(found.text):
                 yield ev
             return
 
@@ -1482,10 +1491,10 @@ class CallSession:
                 yield ev
             return
         if got.label == "coverage":
-            answer = coverage_answer(text, self.lang)
-            if answer:
-                yield ToolCall(tool="policy.coverage_lookup", arg="policy wording")
-                async for ev in self._generated(answer):
+            found = coverage_lookup(text, self.lang, self.knowledge)
+            if found is not None:
+                yield ToolCall(tool="policy.coverage_lookup", arg=found.citation)
+                async for ev in self._generated(found.text):
                     yield ev
                 return
             # We can tell it is a coverage question and still not have the

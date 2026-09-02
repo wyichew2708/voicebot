@@ -13,12 +13,15 @@ from ..call import handoff, script
 from ..call.engine import EMAIL_CONFIRM, EMAIL_ONLY_ONE, prerenderable_lines
 from ..data import personas
 from ..data.facts import policy_answers, price_answer
+from ..knowledge.answer import spoken_lines
+from ..knowledge.policy import Serving, default_serving
 
 Job = tuple[str, str, str | None]          # text, language, voice
 
 
 def plan(langs: list[str], registers: list[str],
-         voices: list[str | None]) -> list[Job]:
+         voices: list[str | None],
+         serving: Serving | None = None) -> list[Job]:
     """Every distinct (line, language, voice) a call can reach.
 
     Every configured voice gets its own entries: the cache is keyed on the
@@ -51,6 +54,19 @@ def plan(langs: list[str], registers: list[str],
         # Acknowledgements and repeat lead-ins are spoken from the cache too;
         # a miss would synthesise mid-turn, in front of the line it introduces.
         for text, lang in prerenderable_lines():
+            if lang in langs:
+                add(text, lang, voice)
+        # Coverage answers from the knowledge bundle. These were never warmed
+        # while they lived in the fact store, so the first "what about
+        # renovation?" of a demo paid two to four seconds of live synthesis in
+        # the middle of a turn. Only the wording this deployment is actually
+        # allowed to speak is rendered: warming draft pages on a deployment
+        # that refuses them is GPU time spent on audio that can never play.
+        rules = serving or default_serving()
+        for text, lang in spoken_lines(langs=tuple(langs),
+                                       jurisdiction=rules.jurisdiction,
+                                       products=rules.products,
+                                       allow_unsourced=rules.allow_unsourced):
             if lang in langs:
                 add(text, lang, voice)
         # Answers about the caller's own record. Every agent line comes from

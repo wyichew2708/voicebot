@@ -30,6 +30,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from voicebot import config                                  # noqa: E402
+from voicebot.knowledge import policy as knowledge_policy
 from voicebot.call.engine import CallSession                 # noqa: E402
 from voicebot.data import personas                           # noqa: E402
 
@@ -135,6 +136,13 @@ def main() -> int:
     ap.add_argument("--profile", default="mac-polyglot")
     ap.add_argument("--show", action="store_true")
     args = ap.parse_args()
+
+    # The eval must judge the engine under the same knowledge rules the named
+    # profile runs with, or its numbers describe a bot nobody deploys. The
+    # demo profile speaks unsourced placeholder wording; the RHEL profile
+    # refuses it and offers a colleague, which is a different transcript.
+    serving = knowledge_policy.configure(config.load(args.profile))
+    print(f"knowledge: {serving.describe}\n")
 
     if args.live:
         from voicebot.runtime import load_backend
