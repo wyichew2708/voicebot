@@ -3,7 +3,7 @@ okf_version: "0.1"
 id: product/general/home
 title: Home Insurance
 type: product
-status: draft
+status: approved
 lifecycle: on_sale
 jurisdiction: SG
 underwriter: Etiqa Insurance Pte. Ltd.
@@ -11,56 +11,88 @@ line_of_business: general
 regulated_advice: false
 aliases: ["home insurance", "house insurance", "home policy", "home cover",
           "家居保险", "房屋保险", "住家保险"]
-authority: []
-version_in_force: null
-effective_from: null
+authority:
+  - raw/wordings/tiq-home-2025-03-15-v10.md
+  - raw/marketing/tiq-home-brochure-2025-03.md
+version_in_force: "10"
+effective_from: 2025-03-15
 effective_to: null
 links:
-  contents: product/general/home/contents
+  building: product/general/home/building
   renovation: product/general/home/renovation
-# The provenance section below names both underwriters on purpose: the whole
-# point of the page is which company did NOT write a Singapore home policy.
+  contents: product/general/home/contents
+  emergency_cash: product/general/home/emergency-cash-allowance
+  concepts: [concept/insured-perils, concept/free-look, concept/cancellation-refund]
+# The provenance note below names the Malaysian underwriter in order to rule
+# it out. There is no coverage prose here for a brand to contaminate.
 brand_prose_allowed: >-
-  Names the Malaysian underwriter in order to rule it out. This page makes no
-  coverage claim, so there is no coverage prose for a brand to contaminate.
-confidence: low
+  Records which company did not write this policy, and why the Malaysian
+  document in the corpus must never answer a Singapore caller.
+confidence: high
 compiled_at: 2026-09-03
+review_due: 2026-12-03
 reviewed_by: []
+spoken:
+  source: raw/wordings/tiq-home-2025-03-15-v10.md#p8
+  en: >-
+    The policy is built in sections. Building, renovation and contents are the
+    main three, and each is covered up to the sum insured shown on your
+    schedule. There are further sections for things like an emergency cash
+    allowance, personal legal liability and valuables.
+  zh: >-
+    这份保单是分项目的。建筑、装修和家庭财物是主要的三项，
+    每一项都保到您保单明细表上列明的保额。
+    另外还有紧急现金津贴、个人法律责任和贵重物品等项目。
 ---
 
 # Home Insurance
 
-**This is the product the renewal bot sells, and it is the one product in this
-bundle with no source document.**
+The product this renewal call is about. The wording in force is version 10 of
+15 March 2025
+([source](../../../raw/wordings/tiq-home-2025-03-15-v10.md#p1)).
 
-Nothing under `raw/` describes Singapore home insurance. There is no policy
-wording, no product summary and no rate table. Every claim about what this
-product covers would therefore be unreferenced, so this page and its children
-are `draft` and cannot be approved.
+The policy, schedule, endorsements, online application, proposal form and
+declaration are read together as one contract, and the duty of disclosure
+under section 23(5) of the Insurance Act 1966 is stated on the same page
+([source](../../../raw/wordings/tiq-home-2025-03-15-v10.md#p1)).
 
-## The trap this page exists to close
+## Sections
 
-The only home-insurance document in the corpus is
-`raw/non-sg/etiqa-my-home-faq.md`, a Malaysian FAQ describing four Malaysian
-products under a different underwriter and a different regulator. It is
-superficially the right subject and entirely the wrong answer, and it is the
-most plausible way this bundle could produce a confident falsehood for a
-Singapore caller.
+Fifteen numbered sections. The three that carry the sums insured are
+[building](home/building.md), [renovation](home/renovation.md) and
+[contents](home/contents.md); each pays for physical loss or damage caused by
+an [insured peril](../../concept/insured-perils.md), up to the sum insured
+shown in the schedule, and each is operative only if the schedule shows it
+([source](../../../raw/wordings/tiq-home-2025-03-15-v10.md#p8)).
 
-The jurisdiction rule in the linter refuses it mechanically: a Singapore page
-that cites a Malaysian source fails the build. That is deliberate. Judgement
-is not a control; a failing test is.
+The remaining sections cover an
+[emergency cash allowance](home/emergency-cash-allowance.md), 24-hour
+emergency home assistance, personal legal liability, valuables, removal of
+debris, professional fees, conservancy charges, unauthorised transactions on a
+stolen card, accidental breakage of mirrors and fixed glass, money, personal
+cyber, and family accidental death protection
+([source](../../../raw/wordings/tiq-home-2025-03-15-v10.md#p8)).
 
-See [the conflict entry](../../../conflicts/0001-no-sg-home-wording.md).
+## Sums insured are per customer, not per product
 
-## To finish this page
+Every one of those sections is capped by the sum insured "stated in the
+Schedule", which is the customer's own document
+([source](../../../raw/wordings/tiq-home-2025-03-15-v10.md#p8)). So the
+figures are not knowledge and do not belong in this bundle. The bot reads them
+from the policy record, where they are already correct for the person on the
+line.
 
-Drop Etiqa's Singapore home wording and product summary into `raw/wordings/`,
-declare them in `sources.yaml`, run `make kb-ingest`, then compile the benefit
-table and the coverage sections from them. No code changes: the moment these
-pages reach `approved`, the bot starts answering coverage questions from them
-with citations, in every deployment, including the ones that refuse unsourced
-answers today.
+The product brochure prints indicative ranges by plan type. It is marketing,
+the lowest authority in the bundle, its table extracts unreliably from the
+PDF, and none of it is compiled here.
+
+## Provenance
+
+Until this wording was supplied, the only home-insurance document in the
+corpus was a Malaysian FAQ from Etiqa General Insurance Berhad, a different
+underwriter under a different regulator. The jurisdiction rule refuses it
+mechanically, which is why nothing on this page ever came from it. See
+[conflict 0001](../../../conflicts/0001-no-sg-home-wording.md).
 
 ## How to buy
 

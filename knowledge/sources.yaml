@@ -73,6 +73,39 @@ sources:
     effective_from: 2023-12-01
     effective_to: 2023-12-31
 
+  # The product this bot actually sells. Published by the insurer on its own
+  # site, so the URL is the provenance and a re-download is checkable against
+  # the recorded hash.
+
+  - file: knowledge/sources/Tiq-Home-Policy-Wording-v9-20-Oct-2023.pdf
+    # The filename and the URL say v9, 20 October 2023. Every page of the
+    # document itself says "V10 | 15 March 2025", and only the last line of
+    # the last page repeats the 2023 date. The document wins: it is the
+    # contract. See conflicts/0002.
+    dest: raw/wordings/tiq-home-2025-03-15-v10.md
+    title: Tiq Home Insurance policy wording, Version 10
+    publisher: Etiqa Insurance Pte. Ltd.
+    jurisdiction: SG
+    authority: policy_wording
+    document_version: "10"
+    effective_from: 2025-03-15
+    effective_to: null
+    url: https://www.tiq.com.sg/wp-content/uploads/2023/10/Tiq-Home-Policy-Wording-v9-20-Oct-2023-FINAL.pdf
+
+  # A brochure is never authoritative. It is ingested for context and for the
+  # conflict queue: where it disagrees with the wording, the wording wins and
+  # the disagreement is a defect raised against the brochure.
+  - file: knowledge/sources/Tiq-Home-Brochure-2025-03.pdf
+    dest: raw/marketing/tiq-home-brochure-2025-03.md
+    title: Tiq Home Insurance brochure
+    publisher: Etiqa Insurance Pte. Ltd.
+    jurisdiction: SG
+    authority: marketing
+    document_version: null
+    effective_from: null
+    effective_to: null
+    url: https://www.tiq.com.sg/wp-content/uploads/2025/03/Tiq_Home_Brochure.pdf
+
   # --- Malaysia: a different underwriter. Quarantined on purpose. ---------
   # Ingested so the corpus is honest about what exists on the shelf, and so
   # the jurisdiction gate has something real to refuse. "Etiqa MY Home FAQs"

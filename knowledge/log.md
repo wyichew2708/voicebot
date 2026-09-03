@@ -56,3 +56,69 @@ Draft, unsourced: `product/general/home` and its two children,
 
 `conflicts/0001-no-sg-home-wording.md` — the product the bot sells has no
 source document.
+
+## 2026-09-03 — the home wording arrived
+
+The customer supplied two documents from tiq.com.sg: the Tiq Home policy
+wording and the product brochure. Ingested, and the gap that
+`conflicts/0001` was filed for is closed.
+
+| Source | Authority | Pages |
+|---|---|---|
+| Tiq Home policy wording v10, 15 Mar 2025 | policy_wording | 22 |
+| Tiq Home brochure | marketing | 6 |
+
+### Compiled
+
+Nineteen pages now, thirteen approved. New and cited from the home wording:
+
+- `product/general/home` moved from draft to approved
+- `product/general/home/building` (section 1)
+- `product/general/home/renovation` (section 2), rewritten from the definition
+- `product/general/home/contents` (section 3), rewritten from the definition
+- `product/general/home/emergency-cash-allowance` (section 4), with the only
+  home benefit table the wording fixes
+- `concept/insured-perils`, the gate every home coverage question passes
+- `concept/cancellation-refund`, eighty per cent pro-rata
+- `concept/free-look` widened from travel-only to home as well
+
+### Decisions
+
+- **The document outranks its own filename.** The PDF is published at a v9,
+  20 October 2023 URL and every page reads "V10 | 15 March 2025". Recorded as
+  version 10, effective 15 March 2025, and filed as `conflicts/0002`.
+- **No figures compiled from the brochure.** It is `marketing`, the lowest
+  authority, and its benefit table extracts from the PDF with the columns
+  scrambled. Sums insured are per customer anyway: the wording caps every
+  section at "the Sum Insured stated in the Schedule", so they belong in the
+  policy record, not in the bundle. The emergency cash allowance is the
+  exception, because the wording states those amounts outright.
+- **Contents answers defer on specifics.** The definition is one line and the
+  exclusion list is ten. A caller asking about contents has one object in
+  mind, so the spoken wording gives the definition and hands the item to a
+  person.
+- **Free look widened on a citation.** Yesterday it was scoped to travel and
+  said that nothing established home carried the same terms. The home wording
+  turned out to carry a materially identical clause. The scope changed because
+  a document said so, not because it seemed likely.
+
+### What the wording corrected
+
+Both placeholder answers were subtly wrong.
+
+- Renovation was "fixtures and fittings you have installed, such as flooring,
+  built-in cabinetry and wiring". Wiring is not in the definition, and a
+  former owner's improvements are covered too.
+- Contents was "furniture, appliances and personal effects". The definition is
+  any moveable household item, and the substance of the clause is its
+  exclusions: motor vehicles, pedal cycles, cash, documents, and anything
+  already counted under renovation or the building.
+
+Neither was ever spoken on the RHEL profile, which refuses unsourced wording.
+Both were spoken on the demo.
+
+### Open
+
+- `conflicts/0002` — the wording contradicts its filename about version and
+  effective date, so policies cannot be version-matched.
+- Tiq Personal Accident, the cross-sell, still has no source document.

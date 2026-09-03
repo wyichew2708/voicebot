@@ -615,16 +615,16 @@ whose failure matters most.
 - **Malay speech output is on hold** pending a TTS licence. Malay *understanding* is live and routes
   to a human.
 - **No telephony.** Browser only. SIP is the RHEL build's job.
-- **The product this bot sells has no policy document.** Coverage answers now come from the OKF
-  bundle in `knowledge/`, where every approved answer cites a source. Nothing describes Singapore
-  home insurance, so its pages are drafts carrying the old placeholder wording. The demo profile
-  speaks them; the RHEL profile refuses them and offers a colleague. See
-  [docs/knowledge-layer.md](docs/knowledge-layer.md) and
-  `knowledge/conflicts/0001-no-sg-home-wording.md`.
-- **Cross-sell figures in `data/facts.py` are still placeholders.** The discount, the starting
-  premium and the inpatient limit are the numbers most likely to be quoted on a call and the ones
-  with the least evidence behind them. Repopulate from Etiqa's rate card before this touches
-  anything real.
+- **The home wording contradicts its own filename.** It is published at a v9, 20 October 2023 URL
+  and every page of it reads "V10 | 15 March 2025". The bundle records what the document says, but
+  a customer's policy cannot be version-matched until Etiqa confirms which is in force. See
+  `knowledge/conflicts/0002-home-wording-version-mismatch.md`.
+- **Tiq Personal Accident has no source document.** Coverage answers come from the OKF bundle in
+  `knowledge/`, where every approved answer cites a policy wording and a page number, and home
+  insurance is now fully compiled from its own wording. The cross-sell product is not: its
+  discount, starting premium and inpatient limit are still placeholders in `data/facts.py`, and
+  they are the numbers most likely to be quoted on a call. See
+  [docs/knowledge-layer.md](docs/knowledge-layer.md).
 - **The DNC reading is not legal advice.** Confirm with counsel before dialling a real number.
 - **Latency figures in mock/typed mode exclude ASR and endpointing**, because neither runs — you are
   typing, not speaking. The clock starts when the caller's audio arrives, so the number is honest for

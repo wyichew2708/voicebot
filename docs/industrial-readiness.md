@@ -139,17 +139,21 @@ In rough order of what would bite first on a real line.
 3. **The recogniser on Singlish.** Polyglot-Lion is the Mac substitute;
    MERaLiON on the GPU box is the model actually trained on it. Accuracy on
    real Singaporean callers is unmeasured until the box runs.
-4. **Facts.** Coverage answers now come from the OKF bundle in `knowledge/`,
-   which cites a source document and a page number for every approved answer,
-   and refuses to let a Singapore page cite a Malaysian one. The gap that
-   remains is the corpus, not the machinery: nothing in it describes Singapore
-   home insurance, which is the product this bot sells. Those pages are drafts
-   carrying the old placeholder wording, the RHEL profile refuses to speak
-   them, and a coverage question there becomes a callback from a colleague.
-   Ingest Etiqa's home wording, product summary and rate table and the same
-   deployment starts answering with citations, no code change. See
-   `docs/knowledge-layer.md`. The cross-sell figures are still placeholders in
-   `data/facts.py` and are the next thing to move into a benefit table.
+4. **Facts.** Coverage answers come from the OKF bundle in `knowledge/`,
+   which cites a source document and a page number for every approved answer
+   and refuses to let a Singapore page cite a Malaysian one. Home insurance is
+   compiled from its own policy wording: the product, its four section pages,
+   the insured perils and the cancellation terms, all cited. Both profiles
+   answer them identically now, because they are no longer unsourced.
+
+   Two gaps remain. **Tiq Personal Accident**, the product the call
+   cross-sells, has no source document, so its discount, starting premium,
+   monthly equivalent and inpatient limit are still placeholders in
+   `data/facts.py` — the figures most likely to be quoted on a call and the
+   ones with the least behind them. And the home wording **contradicts its
+   own filename** about version and effective date, so a customer's policy
+   cannot be matched to the wording that governs it
+   (`knowledge/conflicts/0002`). See `docs/knowledge-layer.md`.
 5. **Prompt caching** on the router — see above. One change, 3.3× on the
    slowest turn type.
 6. **The live eval needs the GPU box.** On this Mac it only runs with the

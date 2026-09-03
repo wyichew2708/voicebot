@@ -43,39 +43,54 @@ knowledge/
 
 ## What is in it today
 
-Nine documents, 121 pages, ingested from Etiqa material on this machine.
+Eleven documents, 149 pages.
 
 | | |
 |---|---|
-| Singapore sources | 5 |
+| Singapore sources | 7 |
 | Malaysian sources, quarantined | 4 |
-| compiled pages | 15 |
-| approved and cited | 8 |
-| draft and unsourced | 7 |
+| compiled pages | 19 |
+| approved and cited | 13 |
+| draft and unsourced | 6 |
 
-The Singapore set is the Tiq Travel wording at versions 7 and 8, the COVID-19
-add-on FAQ, and the 2023 campaign terms. From those, three concepts are
-compiled with clause-level citations: the free look period, the definition of
-a pre-existing condition, and the thirty-day claims deadline.
+The home set is the Tiq Home policy wording, from which the product page, its
+four section pages and two concepts are compiled with clause-level citations.
+The travel set is the Tiq Travel wording at versions 7 and 8, the COVID-19
+add-on FAQ and the 2023 campaign terms.
 
-## The gap that matters
+The home brochure is ingested as `marketing`, the lowest authority. Nothing is
+compiled from it: its benefit table extracts from the PDF with the columns
+scrambled, and the sums insured it prints are per customer anyway. The wording
+caps every section at "the Sum Insured stated in the Schedule", so those
+figures live in the policy record where they are already right for the person
+on the line.
 
-**The product this bot sells has no source document.** Nothing describes
-Singapore home insurance. The home pages are therefore `draft`, they cite
-nothing, and they carry the two placeholder answers that used to live in the
-fact store.
+## What the wording changed
 
-The only home-insurance document in the corpus is a Malaysian FAQ, published
-by a different underwriter under a different regulator, describing four
-Malaysian products. It is superficially the right subject and entirely the
-wrong answer. It is the most plausible route by which this bundle could tell a
-Singapore customer something false.
+For a day, this bundle had no source for the product the bot sells, and the
+only home-insurance document in the corpus was a Malaysian FAQ from a
+different underwriter under a different regulator. It was superficially the
+right subject and entirely the wrong answer, and it never contributed a word,
+because a Singapore page citing a Malaysian source fails the lint. Judgement
+is not a control. A failing test is.
 
-So the jurisdiction rule is mechanical, not a matter of care: a Singapore page
-that cites a Malaysian source fails the lint and cannot be merged. Judgement is
-not a control. A failing test is.
+The real wording is now in, and it corrected both answers the bot had been
+giving.
 
-See `knowledge/conflicts/0001-no-sg-home-wording.md`.
+| Was | Is |
+|---|---|
+| renovation covers fittings "you have installed", including wiring | wiring is not in the definition, and a former owner's improvements count |
+| contents means "furniture, appliances and personal effects" | any moveable household item, minus ten lines of exclusions |
+
+Neither wrong version was ever spoken on the RHEL profile, which refuses
+unsourced wording. Both were spoken on the demo. That is the setting earning
+its keep.
+
+Two things are still open. The wording contradicts its own filename about
+which version it is and when it took effect, so policies cannot be
+version-matched (`conflicts/0002`). And Tiq Personal Accident, the product the
+call cross-sells, still has no source document, which leaves its discount and
+premium figures as placeholders in the fact store.
 
 ## The one setting
 
@@ -83,32 +98,32 @@ See `knowledge/conflicts/0001-no-sg-home-wording.md`.
 
 | Profile | Setting | Effect |
 |---|---|---|
-| `mac-polyglot` | `allow` | the demo speaks the placeholder home wording, exactly as before |
-| `rhel` | `refuse` | a home coverage question becomes a callback from a colleague |
+| `mac-polyglot` | `allow` | draft wording may be spoken |
+| `rhel` | `refuse` | only wording with a source behind it may be spoken |
 
 The bundle default is `refuse`. A deployment opts into `allow` in its own
 config file, where a reader can see it, and the console logs which it is at
 startup and reports it on `/api/health`.
 
-On RHEL this will look like a regression and is not one. Until Etiqa's home
-wording is ingested, "I'd rather a colleague confirm exactly what's covered
-than guess" is the only honest answer the bot has.
+Since the home wording arrived, the two profiles answer home coverage
+questions identically, because those answers are no longer unsourced. The
+setting still matters for the next page that arrives before its document
+does.
 
-## Closing the gap
+## Adding a document
 
-No code changes are needed.
+No code changes are needed. This is the path the home wording took.
 
-1. Put the home policy wording, product summary and rate table somewhere
-   readable and declare them in `knowledge/sources.yaml`.
-2. `make kb-ingest` — extracts, hashes and dates them into `raw/`.
-3. Compile the coverage sections and the benefit table, citing page numbers.
+1. Put the document somewhere readable and declare it in
+   `knowledge/sources.yaml` with its publisher, jurisdiction and authority.
+2. `make kb-ingest` — extracts, hashes and dates it into `raw/` with page
+   markers, so a citation can name a page.
+3. Compile the pages, citing page numbers.
 4. `make kb-lint` — the gate.
 5. Move the pages to `status: approved` under dual sign-off.
 
-Every deployment then answers home coverage questions with a citation,
-including the ones refusing them today. `tests/test_knowledge.py` has a test
-that fails the moment home insurance gains a source, so that nobody forgets
-step five.
+`tests/test_knowledge.py` fails the day Tiq Personal Accident gains a source,
+so nobody forgets step five for the one product still missing.
 
 ## The rules the linter enforces
 

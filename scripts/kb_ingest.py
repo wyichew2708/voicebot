@@ -108,6 +108,7 @@ def ingest_one(entry: dict, check: bool) -> dict:
         f"<!-- publisher: {entry['publisher']} -->\n"
         f"<!-- jurisdiction: {entry['jurisdiction']} -->\n"
         f"<!-- authority: {entry['authority']} -->\n"
+        f"<!-- url: {entry.get('url') or 'n/a'} -->\n"
         f"<!-- source_sha256: {digest} -->\n\n"
     )
     dest.write_text(header + text + "\n")
@@ -120,6 +121,7 @@ def ingest_one(entry: dict, check: bool) -> dict:
         "effective_from": str(entry.get("effective_from") or ""),
         "effective_to": str(entry.get("effective_to") or ""),
         "source_filename": src.name,
+        "url": entry.get("url"),
         "source_sha256": digest,
         "pages": pages,
         "ingested_on": str(date.today()),

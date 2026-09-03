@@ -7,6 +7,7 @@ citing a Malaysian source is the control that keeps this corpus honest.
 from __future__ import annotations
 
 import json
+import re
 from datetime import date
 from pathlib import Path
 
@@ -72,13 +73,35 @@ def test_an_unknown_figure_raises_rather_than_rendering_a_hole(bundle):
         bundle.resolve("{{table:tiq-travel-covid19-addon:no_such_benefit:savvy}}")
 
 
-def test_the_product_the_bot_sells_has_no_source(bundle):
-    """Documents the gap, and fails loudly the day it is closed so that
-    somebody remembers to move the pages to approved."""
+def test_the_product_the_bot_sells_is_now_sourced(bundle):
+    """This test used to assert the opposite, and failed the day the customer
+    supplied the wording. That was the point of it."""
     home = bundle.get("product/general/home")
-    assert home.status == "draft" and not home.authority, (
-        "home insurance now has a source: move the pages to approved, "
-        "compile the benefit table, and delete this test")
+    assert home.status == "approved"
+    assert "raw/wordings/tiq-home-2025-03-15-v10.md" in home.authority
+    for child in ("building", "renovation", "contents", "emergency-cash-allowance"):
+        page = bundle.get(f"product/general/home/{child}")
+        assert page is not None and page.status == "approved", child
+
+
+def test_the_cross_sell_is_still_unsourced(bundle):
+    """The remaining gap, and the figures most likely to be quoted on a call.
+    Fails the day a personal accident document is ingested."""
+    pa = bundle.get("product/protection/personal-accident")
+    assert pa.status == "draft" and not pa.authority, (
+        "personal accident now has a source: compile its benefit table, have "
+        "the fact store read from it, and update this test")
+
+
+def test_home_answers_survive_the_production_profile(bundle):
+    """The whole point of ingesting the wording: RHEL refuses unsourced
+    wording, and these answers are no longer unsourced."""
+    from voicebot.data.facts import coverage_lookup
+    rhel = Serving("SG", ("product/general/home",), allow_unsourced=False)
+    for question in ("does it cover my renovation", "what about home contents",
+                     "is fire covered", "can i cancel my policy"):
+        got = coverage_lookup(question, "en", rhel)
+        assert got is not None and got.sourced, question
 
 
 # --- the rules bite --------------------------------------------------------
@@ -201,13 +224,18 @@ def test_golden(case, bundle):
 
 # --- warming ---------------------------------------------------------------
 
-def test_spoken_lines_follow_the_serving_policy(bundle):
-    sourced = spoken_lines(bundle, allow_unsourced=False)
-    everything = spoken_lines(bundle, allow_unsourced=True)
-    assert len(everything) > len(sourced)
-    texts = {t for t, _ in sourced}
-    assert not any("movable belongings" in t for t in texts), (
-        "unsourced placeholder wording must not be warmed where it cannot be spoken")
+def test_spoken_lines_follow_the_serving_policy(tmp_path):
+    """Draft wording is warmed only where it could be spoken.
+
+    Written against a synthetic bundle rather than the real one: every page in
+    the shipped bundle that carries spoken wording is now approved, so the
+    real bundle can no longer exercise the difference. It still has to work,
+    because the next unsourced page will arrive before its source does."""
+    body = HEAD.format(status="draft", authority="[]", body="B.", extra=(
+        "spoken:\n  en: A draft sentence.\n  zh: 一句草稿。\n"))
+    b = _page(tmp_path, body)
+    assert spoken_lines(b, allow_unsourced=False) == []
+    assert len(spoken_lines(b, allow_unsourced=True)) == 2
 
 
 def test_warming_is_scoped_to_what_this_deployment_can_say(bundle):
@@ -217,7 +245,10 @@ def test_warming_is_scoped_to_what_this_deployment_can_say(bundle):
     home_only = spoken_lines(bundle, allow_unsourced=True,
                              products=("product/general/home",))
     assert len(home_only) < len(everything)
-    assert not any("fourteen days" in t for t, _ in home_only), (
+    # The travel claims deadline is scoped to travel. The free look is not a
+    # valid probe any more: both wordings carry it, so it is warmed for home
+    # on purpose.
+    assert not any("thirty days" in t for t, _ in home_only), (
         "a travel-scoped clause was warmed for a home-only deployment")
 
 
@@ -228,7 +259,7 @@ def test_coverage_answers_are_warmed_at_all():
     jobs = warm.plan(["en", "zh"], ["standard"], [None],
                      Serving("SG", (), allow_unsourced=True))
     texts = {t for t, _, _ in jobs}
-    assert any("Renovation cover applies" in t for t in texts)
+    assert any("built-in wardrobes and kitchen cabinets" in t for t in texts)
 
 
 # --- the engine's contract -------------------------------------------------
@@ -238,8 +269,11 @@ def test_the_engine_records_a_citation(bundle):
     got = coverage_lookup("what is the free look period", "en",
                           Serving("SG", ("product/general/travel",), False))
     assert isinstance(got, Answer)
-    assert got.citation.endswith("#p39")
     assert got.sourced
+    # A page, a source document and a page number. Which document leads is the
+    # page's business; that there is one, and that it names a page, is not.
+    assert " <- raw/wordings/" in got.citation
+    assert re.search(r"#p\d+$", got.citation)
 
 
 def test_a_broken_bundle_does_not_drop_the_call(monkeypatch):
