@@ -510,13 +510,14 @@
           <select id="selPersona"></select>
         </div>
         <div class="field">
-          <label class="fieldlab" for="inName">Surname &mdash; try a pronunciation</label>
+          <label class="fieldlab" for="inName">Name &mdash; try a pronunciation</label>
           <div class="namerow">
             <select id="selSal" aria-label="Salutation">
               <option>Mr</option><option>Ms</option><option>Mrs</option><option>Mdm</option>
+              <option>Madam</option><option>Miss</option>
             </select>
             <input id="inName" type="text" autocomplete="off" spellcheck="false"
-                   placeholder="blank = use the record">
+                   placeholder="surname, or a full name">
           </div>
           <div class="vpickhint" id="nameHint"></div>
         </div>
@@ -1452,10 +1453,16 @@ speech. Each setting is a multiple of the measured room level."></div>
             + "will address them without it.";
           return;
         }
+        // A full name is reduced to the one word the call says, and that
+        // is worth showing: an operator who typed three words should see
+        // which of them the customer will actually be called.
         var said = d.spoken_as;
-        hint.textContent = said === (over.salutation + " " + over.surname)
-          ? "Spoken as written."
-          : "Spoken to the voice as \u201c" + said + "\u201d.";
+        var lead = d.shortened
+          ? "Addressed as \u201c" + over.salutation + " " + d.said_as + "\u201d. "
+          : "";
+        hint.textContent = said === (over.salutation + " " + d.said_as)
+          ? (lead || "Spoken as written.")
+          : lead + "Spoken to the voice as \u201c" + said + "\u201d.";
       })
       .catch(function () { hint.textContent = ""; });
   }

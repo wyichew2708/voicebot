@@ -12,7 +12,8 @@ from typing import Literal
 
 from ..data.facts import CROSS_SELL, cross_sell_line
 from ..data.personas import Policy
-from ..spoken import _en_date, sayable, zh_date, zh_decimal, zh_number
+from ..spoken import (_en_date, sayable, surname_of, zh_date, zh_decimal,
+                      zh_number)
 
 TurnKind = Literal["static", "template", "generated"]
 
@@ -51,7 +52,8 @@ TURNS: tuple[Turn, ...] = (
 )
 
 
-_ZH_SALUTATION = {"Mr": "先生", "Ms": "女士", "Mrs": "女士", "Mdm": "女士"}
+_ZH_SALUTATION = {"Mr": "先生", "Ms": "女士", "Mrs": "女士", "Mdm": "女士",
+                  "Madam": "女士", "Miss": "小姐", "Dr": "医生"}
 
 _MONTHS = {"january": 1, "february": 2, "march": 3, "april": 4, "may": 5, "june": 6,
            "july": 7, "august": 8, "september": 9, "october": 10, "november": 11,
@@ -71,9 +73,21 @@ def _zh_date(value: str) -> str:
     return zh_date(value)
 
 
+def _surname(p: Policy) -> str:
+    """The one name this call says out loud.
+
+    A record is supposed to carry the surname on its own, and every line below
+    is written as salutation plus that one name. Where the field turns out to
+    hold the whole name — an operator typing it into the console, a CRM column
+    that is not what it claims — this reduces it rather than reading it out:
+    "Mr Chew", never "Mr Chew Yi Feng".
+    """
+    return surname_of(p.surname or p.name)
+
+
 def _zh_address(p: Policy) -> str:
     """Chinese honorific follows the surname: 陈先生, not 陈先生女士."""
-    return f"{p.surname}{_ZH_SALUTATION.get(p.salutation, '先生')}"
+    return f"{_surname(p)}{_ZH_SALUTATION.get(p.salutation, '先生')}"
 
 
 def _named(p: Policy) -> bool:
@@ -85,7 +99,8 @@ def _named(p: Policy) -> bool:
     it: the whole turn is a trust test, and a mispronounced name fails it
     before the question is even asked.
     """
-    return sayable(p.surname)
+    said = _surname(p)
+    return bool(said) and sayable(said)
 
 
 def _greeting(lang: str, part_of_day: str) -> str:
@@ -157,8 +172,8 @@ def render(turn: int, p: Policy, lang: str, part_of_day: str = "afternoon",
         }[turn]
 
     return {
-        1: ((f"{g} {p.salutation} {p.surname}. This is {agent_name} calling from "
-             f"Etiqa Insurance. Am I speaking with {p.salutation} {p.surname}?")
+        1: ((f"{g} {p.salutation} {_surname(p)}. This is {agent_name} calling from "
+             f"Etiqa Insurance. Am I speaking with {p.salutation} {_surname(p)}?")
             if _named(p) else
             (f"{g}. This is {agent_name} calling from Etiqa Insurance. "
              f"Am I speaking with the policyholder?")),
@@ -179,7 +194,7 @@ def render(turn: int, p: Policy, lang: str, part_of_day: str = "afternoon",
             "once payment is made."),
         6: f"Before I let you go — {cross_sell_line('en')}",
         7: (f"Feel free to note down any questions and we'll assist. Thank you for your "
-            f"time{f', {p.salutation} {p.surname}' if _named(p) else ''}. "
+            f"time{f', {p.salutation} {_surname(p)}' if _named(p) else ''}. "
             f"Have a good day."),
     }[turn]
 
@@ -196,8 +211,8 @@ def _render_singlish(turn: int, p: Policy, part_of_day: str, agent_name: str,
                      done: bool = False) -> str:
     g = _greeting("en", part_of_day)
     return {
-        1: ((f"{g} {p.salutation} {p.surname} ah. I'm {agent_name}, calling from "
-             f"Etiqa Insurance. Speaking to {p.salutation} {p.surname}, is it?")
+        1: ((f"{g} {p.salutation} {_surname(p)} ah. I'm {agent_name}, calling from "
+             f"Etiqa Insurance. Speaking to {p.salutation} {_surname(p)}, is it?")
             if _named(p) else
             (f"{g} ah. I'm {agent_name}, calling from Etiqa Insurance. "
              f"Speaking to the policyholder, is it?")),
@@ -222,7 +237,7 @@ def _render_singlish(turn: int, p: Policy, part_of_day: str, agent_name: str,
             f"{CROSS_SELL['monthly'].en}. Got COVID-19 coverage, and "
             f"{CROSS_SELL['inpatient'].en}, dengue also covered."),
         7: (f"Any questions just write down, we help you. Thank you ah"
-            f"{f' {p.salutation} {p.surname}' if _named(p) else ''}, "
+            f"{f' {p.salutation} {_surname(p)}' if _named(p) else ''}, "
             f"you take care."),
     }[turn]
 

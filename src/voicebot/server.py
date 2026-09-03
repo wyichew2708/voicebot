@@ -443,17 +443,30 @@ def _with_surname(policy, surname: str | None, salutation: str | None):
     A copy, never a mutation: `personas.get` hands back the module-level
     object, and editing it would follow the operator into every later call in
     the process.
+
+    A whole name typed into the box is kept as the record's name, where the
+    operator can see what they entered, and reduced to the one word the call
+    actually says. Spliced onto the record's given name instead, "Chew Yi
+    Feng" made a record called "Andrew Chew Yi Feng" and a call that said all
+    of it.
     """
     import dataclasses
 
-    surname = (surname or "").strip()
+    from .spoken import surname_of
+
+    typed = " ".join((surname or "").split())
     salutation = (salutation or "").strip() or policy.salutation
-    if not surname:
+    if not typed:
         return policy
+    said = surname_of(typed)
+    if said.lower() != typed.lower():
+        log.info("name %r on this call is spoken as %r", typed, said)
+        return dataclasses.replace(policy, surname=said, salutation=salutation,
+                                   name=typed)
     given = policy.name.rsplit(" ", 1)[0] if " " in policy.name else ""
     return dataclasses.replace(
-        policy, surname=surname, salutation=salutation,
-        name=(f"{given} {surname}".strip() if given else surname))
+        policy, surname=said, salutation=salutation,
+        name=(f"{given} {said}".strip() if given else said))
 
 
 @app.get("/api/name")
@@ -466,18 +479,25 @@ async def name_preview(surname: str, salutation: str = "Mr",
     only the synthesiser ever sees "Mr Dan".
     """
     from .call import script
-    from .spoken import reload_names, sayable, segment_by_script, spoken_names
+    from .spoken import (reload_names, sayable, segment_by_script, spoken_names,
+                         surname_of)
 
     reload_names()          # so an edit to voices/names.yaml shows up at once
-    surname = (surname or "").strip()
+    surname = " ".join((surname or "").split())
     if not surname:
         return JSONResponse({"error": "no surname"}, status_code=400)
     policy = _with_surname(next(iter(personas.all_policies())), surname, salutation)
     line = script.render(1, policy, lang)
+    # What the call will say, which is one name however many were typed. The
+    # console shows this back, so a full name in the box is visibly shortened
+    # rather than quietly.
+    said = surname_of(surname)
     return JSONResponse({
         "surname": surname,
-        "sayable": sayable(surname),
-        "spoken_as": spoken_names(f"{policy.salutation} {surname}"),
+        "said_as": said,
+        "shortened": said.lower() != surname.lower(),
+        "sayable": bool(said) and sayable(said),
+        "spoken_as": spoken_names(f"{policy.salutation} {said}"),
         "line": line,
         "synthesised": "".join(frag for frag, _ in segment_by_script(line, lang)),
     })

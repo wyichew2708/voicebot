@@ -319,7 +319,143 @@ def spoken_identifiers(text: str) -> str:
 #: so "Tan" only becomes "Dan" where it is a name: the word appears in
 #: ordinary text too, and a lexicon that rewrote all of it would be a bug that
 #: only ever showed up in audio.
-_SALUTATIONS = ("Mr", "Mrs", "Ms", "Mdm", "Dr")
+_SALUTATIONS = ("Mr", "Mrs", "Ms", "Mdm", "Madam", "Miss", "Dr")
+
+# ----------------------------------------------------- which name is said
+# A call says a salutation and one name: "Mr Chew", never "Mr Chew Yi Feng".
+# Reading the whole name out is what a form letter does, not what a person
+# does, and on the turn that asks someone to confirm who they are it sounds
+# like a list being worked through rather than a call being made.
+#
+# The record is supposed to carry the surname on its own, and the three demo
+# personas do. This is the net under that: an operator typing a full name into
+# the console's name box, or a CRM field that turns out to hold "Chew Yi Feng",
+# must not reach the voice whole. Getting the wrong token out of a full name is
+# no worse than today, which says all of them; saying nothing extra is the
+# floor this guarantees.
+
+#: Markers of a patronymic. A name carrying one has no surname at all: the
+#: father's name follows the marker and is not what its owner is called.
+_PATRONYMIC = frozenset(("bin", "binti", "binte", "bte", "ibni",
+                         "s/o", "d/o", "a/l", "a/p"))
+
+#: Religious and honorific elements that open a name without being the name.
+#: "Muhammad Farid bin Abdullah" is addressed as Mr Farid, not Mr Muhammad,
+#: which would fit a large share of the men on any Singapore call list.
+_NAME_PREFIX = frozenset(("muhammad", "muhammed", "mohammad", "mohamed",
+                          "mohd", "md", "nur", "nurul", "siti", "abdul", "abd"))
+
+#: Generational suffixes, which are never the name either.
+_NAME_SUFFIX = frozenset(("jr", "jnr", "sr", "snr", "ii", "iii", "iv"))
+
+#: Given names that place a name in Western order — given name first, surname
+#: last. This is the signal that separates "Andrew Tan" (surname Tan, last)
+#: from "Chew Yi Feng" (surname Chew, first): a Singaporean Chinese name
+#: written surname-first does not open with one of these.
+_WESTERN_GIVEN = frozenset("""
+adam adrian agnes alan albert alex alexander alfred alice alicia alison allan
+amanda amelia amy andre andrea andrew angela angeline ann anna anne annie
+anthony april arthur ashley audrey barbara benjamin bernard bernice beatrice
+betty brandon brenda brian bryan caleb calvin carol caroline catherine cecilia
+celine charles charlotte cheryl chloe chris christina christine christopher
+claire clara clarence clement colin connie constance cynthia daniel danny
+daphne darren david dawn deborah dennis derek derrick desmond diana dominic
+donald donna doreen dorothy douglas edward edwin eileen elaine eleanor elizabeth
+ellen elsie emily emma enoch eric erica ernest esther eugene eunice evelyn
+faith felicia felix fiona florence frances francis frank gabriel gary gavin
+genevieve geoffrey george gerald geraldine gilbert gladys glenn gloria grace
+graham gregory hannah harold harry hazel heather helen henry herbert hilda
+hubert hugh ian irene iris isaac isabel ivan ivy jacob jacqueline james jane
+janet janice jared jason jasmine jasper jean jeffrey jennifer jenny jeremy
+jerome jerry jessica jessie jimmy joan joanna joanne joel john johnny jonathan
+jordan joseph josephine joshua joy joyce juan judith judy julia julian julie
+juliet justin karen katherine kathleen kathryn keith kelly kenneth kevin kimberly
+kirsten laura lauren lawrence leonard leslie lester lewis lillian lily linda
+lionel lisa lorraine louis louise lucas lucy luke lydia lynn madeleine malcolm
+marcus margaret maria marian marie marilyn marion mark martha martin mary
+matthew maureen maurice maxwell megan melanie melissa melvin mercy michael
+michelle mildred millie miriam moses nancy naomi natalie nathan neil nelson
+nicholas nicole noel norman olivia oscar owen pamela patricia patrick paul
+paula pauline pearl peggy peter philip phillip phoebe priscilla rachel ralph
+raymond rebecca regina reginald rex richard rita robert roberta robin roger
+roland ronald rosalind rose rosemary roy ruby russell ruth ryan sally samantha
+samuel sandra sarah scott sean selena serene shane sharon sheila shirley simon
+sophia sophie stanley stella stephanie stephen steven stuart susan susanna
+suzanne sylvia tanya terence teresa terry theodore theresa thomas timothy tina
+tobias tommy tracy travis trevor valerie vanessa vera veronica victor victoria
+vincent violet virginia vivian vivien walter wayne wendy wesley william wilson
+winnie yvonne zachary zoe
+""".split())
+
+#: Romanised Chinese surnames, used only to break a two-token tie: "Xiaoli
+#: Tan" is not Western order, and without this the first token would be read
+#: as the surname. Deliberately not consulted for longer names, where a known
+#: surname sitting last is far more often a given name that happens to double
+#: as one — "Chuan Ping Fong" is addressed as Madam Chuan, though Fong is a
+#: surname too.
+_CHINESE_SURNAME = frozenset("""
+ang aw bek boey chai chan chang chay chea chee chen cheng cheong cheung chew
+chia chiang chin ching chng cho choo chong chow choy chu chua chuan chum chung
+er eng fan fang foo fong fu gan gay geh giam goh gan guan guo ha han heng ho
+hoe hon hong hoo hsu hu hua huang hui hung ir jiang jong kam kang kee keng khaw
+kho khoo khor koh kok kong koo ku kuah kuek kum kwa kwan kwek kwok lai lam lau
+law lay lee leong leow li liang liew lim lin ling liu lo loh loke long loo low
+lu luo ma mah mak mao mok moy mun na nah nam nee neo ng ngo oh ong ooi ou pan
+pang pau peh pek peng phang pheng phua phun poh pua puah quah quek quek ren
+see seah seet seow seng sha shen shi sia siah siew sim sin sng so soh song soo
+su sui sun sung sze ta tai tam tan tang tay teh tek teng teo teoh thai tham
+thia thio thong thum tian tin ting toh tong tsai tse tu wan wang wee wei wen
+weng wong woo wu xie xu xiong yam yan yang yao yap ye yee yeo yeoh yeung yew
+yim yip yong yoong yow yu yuan yuen zeng zhang zhao zheng zhong zhou zhu
+""".split())
+
+
+def _name_tokens(name: str) -> list[str]:
+    """The name's own words, without salutation, prefixes or suffixes."""
+    parts = [p for p in re.split(r"[\s,]+", (name or "").strip()) if p]
+    lower = {s.lower() for s in _SALUTATIONS}
+    while parts and parts[0].lower().rstrip(".") in lower:
+        parts.pop(0)
+    while parts and parts[-1].lower().rstrip(".") in _NAME_SUFFIX:
+        parts.pop()
+    return parts
+
+
+def surname_of(name: str) -> str:
+    """The single name a call says after the salutation.
+
+    "Chew Yi Feng" -> "Chew"; "Andrew Tan Wei Ming" -> "Tan"; "Mr Tan" ->
+    "Tan"; and a name that is already one word is returned unchanged, which
+    is what keeps every record and every cached line exactly as it was.
+    """
+    tokens = _name_tokens(name)
+    if not tokens:
+        return ""
+    if len(tokens) == 1:
+        return tokens[0]
+
+    # A patronymic names the father, not its owner. Everything before the
+    # marker is the person's own name; the last word of it is what they are
+    # called, once the religious openers are set aside.
+    for i, token in enumerate(tokens):
+        if token.lower().strip(".") in _PATRONYMIC:
+            own = tokens[:i] or tokens[i + 1:]
+            kept = [t for t in own if t.lower() not in _NAME_PREFIX]
+            return (kept or own)[-1] if (kept or own) else ""
+
+    # Western order: given name first, so the surname is last — except where a
+    # Chinese given name follows it, and "Andrew Tan Wei Ming" is Mr Tan.
+    if tokens[0].lower() in _WESTERN_GIVEN:
+        return tokens[1] if len(tokens) >= 3 else tokens[-1]
+
+    # Two words, neither of them Western: prefer whichever is a surname.
+    if (len(tokens) == 2 and tokens[0].lower() not in _CHINESE_SURNAME
+            and tokens[1].lower() in _CHINESE_SURNAME):
+        return tokens[1]
+
+    # Otherwise the name is written surname-first, as most Singaporean Chinese
+    # and Malay-language names on a policy record are.
+    return tokens[0]
 
 #: Anchored to the package, not to the working directory. Located the same way
 #: config.py and server.py locate theirs, and for the same reason: a relative

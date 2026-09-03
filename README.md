@@ -106,6 +106,36 @@ and the voice becomes theirs.
 The alternative remains the best one for a demo: **a Singaporean voice actor records the six
 pre-rendered turns.** No cloning artefacts, no model risk, and it covers most of every call.
 
+## The call says one name
+
+A salutation and the surname — **"Mr Chew"**, never "Mr Chew Yi Feng". Reading the whole name out
+is what a form letter does, and on turn 1, which asks someone to confirm they *are* that person, it
+sounds like a list being worked through rather than a call being made.
+
+The record is meant to carry the surname on its own and the three demo personas do, so
+`spoken.surname_of()` is the net under that: an operator typing a full name into the console, or a
+CRM column that turns out to hold one, is reduced before it reaches the voice.
+
+| on the record | said | why |
+|---|---|---|
+| `Chew Yi Feng` | Mr **Chew** | surname-first, as most Singaporean Chinese records are written |
+| `Chuan Ping Fong` | Madam **Chuan** | same |
+| `Andrew Tan` | Mr **Tan** | a Western given name puts the surname last |
+| `Andrew Tan Wei Ming` | Mr **Tan** | …unless a Chinese given name follows it |
+| `Muhammad Farid bin Abdullah` | Mr **Farid** | a patronymic names the father, not its owner |
+| `Rajesh s/o Kumar` | Mr **Rajesh** | same |
+
+The signal that separates the two orders is the **given name**, not the surname: a name written
+surname-first does not open with "Andrew". A single-word surname is returned untouched, which is
+what keeps every existing record and every cached line exactly as it was.
+
+⚠ **The patronymic rule needs Etiqa's confirmation.** Malay and Indian names have no surname, and
+dropping the religious opener — "Mr Farid", not "Mr Muhammad" — is what a Singaporean agent would
+say, but it is a convention rather than a field on the record.
+
+The full name is still shown to the **operator** in the console header and handed to a **colleague**
+in a handoff, because both of them need the record. It is only the voice that says one word.
+
 ## Numbers the customer reads back
 
 A premium is a quantity and is read as one. A policy number, an email, a unit number and a callback
