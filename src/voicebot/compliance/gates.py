@@ -54,16 +54,28 @@ WRONG_PARTY = ("not home", "not in", "he's not", "she's not", "hes not", "shes n
                "不在", "打错")
 
 
+#: Mandarin negates by prefix, so every affirmative is a substring of its own
+#: negation: 不是 contains 是, 不对 contains 对, 我不是 contains 是. Plain
+#: containment therefore read "no, I'm not" as "yes" and passed the identity
+#: gate — on a recorded call the bot answered 呃不是 by reading the caller's
+#: property address back to a person who had just said they were not the
+#: policyholder. This is the CJK half of the "ya" inside "Malaysia" problem,
+#: and the more dangerous half, because the negation is the common case.
+NEGATORS = frozenset("不没沒非未无無别別莫勿")
+
+
 def _contains(haystack: str, needle: str) -> bool:
-    """Word-boundary match for latin tokens, plain containment for CJK.
+    """Word-boundary match for latin tokens, negation-aware containment for CJK.
 
     Short tokens like "ya" must not match inside "Malaysia" or "player" — a
     false positive here waves an unverified caller past the one gate that
-    protects personal data.
+    protects personal data. The same is true of 是 inside 不是, which is why
+    a CJK match immediately after a negator does not count.
     """
     if needle.isascii():
         return re.search(rf"(?<![a-z]){re.escape(needle)}(?![a-z])", haystack) is not None
-    return needle in haystack
+    return any(m.start() == 0 or haystack[m.start() - 1] not in NEGATORS
+               for m in re.finditer(re.escape(needle), haystack))
 
 
 def check_identity(reply: str) -> tuple[GateState, str]:

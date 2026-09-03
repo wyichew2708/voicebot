@@ -268,3 +268,58 @@ def test_a_yes_still_delivers_it():
     session = _at_the_cross_sell()
     said = _say(session, "yes, go ahead")
     assert "40 percent off" in said
+
+
+# --- Mandarin negation at the identity gate -------------------------------
+# Reported: the bot asked 请问是Ng女士本人吗？, the caller answered 呃不是, and
+# the bot replied by reading their property address back to them. The gate had
+# passed, because 不是 contains 是.
+
+@pytest.mark.parametrize("reply", [
+    "呃不是", "不是", "不是的", "我不是", "呃，不是", "不对", "没有", "不是我",
+])
+def test_a_mandarin_denial_never_passes_the_identity_gate(reply):
+    """Mandarin negates by prefix, so every affirmative is a substring of its
+    own negation. Containment read "no, I'm not" as "yes" and disclosed the
+    property address to someone who had just said they were not the customer."""
+    state, _ = check_identity(reply)
+    assert state != "pass", reply
+
+
+@pytest.mark.parametrize("reply", ["是", "是的", "我是", "对", "对的"])
+def test_a_mandarin_affirmation_still_passes(reply):
+    """The fix must not close the gate on the people entitled through it."""
+    assert check_identity(reply)[0] == "pass", reply
+
+
+def test_a_negated_wrong_party_phrase_is_not_a_wrong_party():
+    """The same rule applies in the other direction: 没打错 is "I did not dial
+    wrong", and blocking on it would fail a caller who is the right party."""
+    assert check_identity("没打错")[0] != "block"
+    assert check_identity("他不在")[0] == "block"
+
+
+def test_no_personal_detail_is_disclosed_to_a_mandarin_denial():
+    """The gate is the mechanism; this is the consequence it exists for."""
+    import asyncio
+
+    from voicebot.call.engine import CallSession
+    from voicebot.data import personas
+    from voicebot.events import Transcript
+    from voicebot.runtime.mock import MockBackend
+
+    session = CallSession(personas.get("TH-5120-7742"), MockBackend())
+
+    async def go():
+        out = []
+        async for e in session.start():
+            out.append(e)
+        async for e in session.on_caller("呃不是", lang="zh"):
+            out.append(e)
+        return out
+
+    said = " ".join(e.text for e in asyncio.run(go())
+                    if isinstance(e, Transcript) and e.speaker == "agent")
+    p = personas.get("TH-5120-7742")
+    assert p.property_address not in said, "address disclosed to a denied identity"
+    assert session.gates.identity != "pass"
