@@ -25,6 +25,11 @@ backend:
   tts:
     # Live voice: improvised lines only, where 200 ms matters.
     model: mlx-community/Kokoro-82M-4bit
+    # The live voice's own Mandarin speaker. Reached only when the pre-render
+    # model is unavailable — and reached without this, a Mandarin line went
+    # through the English phonemiser as af_heart.
+    voices:
+      zh: {voice: zm_yunjian, code: z}
     # Scripted turns are rendered once by a better model and played from disk.
     # Qwen3-TTS VoiceDesign takes ~1.4 s a line — irrelevant at build time, and
     # unlike any preset voice it can be *directed* toward a Singaporean accent.
@@ -51,15 +56,27 @@ backend:
         # rendered line is normalised to the figure below. These are each
         # voice's own established median, so the character does not change —
         # only the drift around it goes away.
+        # Each voice clones two clips: an English speaker for English calls and
+        # a Mandarin speaker for Mandarin calls. Cloned from the English clip,
+        # a Mandarin line came back from the recogniser with every character
+        # right and none of the punctuation — the tones and phrasing were flat,
+        # because the speaker being imitated had never spoken Mandarin. The
+        # Mandarin clips are Kokoro's own zm_yunjian (every male voice) and
+        # zf_xiaobei (every female voice), read a Mandarin paragraph. The
+        # language of the *line* picks the clip, so an address inside a
+        # Mandarin sentence is read by the Mandarin speaker rather than by a
+        # second voice at the seam. target_f0 for those clips is measured the
+        # same way as the rest, over five scripted lines: 135 Hz and 226 Hz.
+        # English keys are untouched by any of this; only Mandarin re-renders.
         male:
           label: "Male"
           note: "US · original"
-          ref_audio: voices/refs/male.wav      # Qwen3-TTS "aiden"
-          target_f0: 162
+          ref_audio: {en: voices/refs/male.wav, zh: voices/refs/zm_yunjian.wav}      # Qwen3-TTS "aiden"
+          target_f0: {en: 162, zh: 135}
         female:
           label: "Female"
           note: "US · original"
-          ref_audio: voices/refs/female.wav
+          ref_audio: {en: voices/refs/female.wav, zh: voices/refs/zf_xiaobei.wav}
           # Cloning copies the reference speaker's delivery, and this one
           # reads slowly: 156 words a minute against the male voice's 202.
           # Neither cfg_weight nor exaggeration moves it and Chatterbox
@@ -70,8 +87,8 @@ backend:
           # lands around 170, between the two voices. Below 1.0 slows a voice
           # down. It is in the cache key, so changing it re-renders that
           # voice — pick a number rather than sweeping.
-          rate: 1.1    # Qwen3-TTS "vivian"
-          target_f0: 233
+          rate: {en: 1.1, zh: 1.0}    # Qwen3-TTS "vivian"
+          target_f0: {en: 233, zh: 226}
 
         # Three more, generated from Kokoro's *named speaker* embeddings
         # rather than cloned, then used as Chatterbox references. Kokoro holds
@@ -91,24 +108,24 @@ backend:
         isabella:
           label: "Isabella"
           note: "UK · steady"
-          ref_audio: voices/refs/bf_isabella.wav
-          target_f0: 200
+          ref_audio: {en: voices/refs/bf_isabella.wav, zh: voices/refs/zf_xiaobei.wav}
+          target_f0: {en: 200, zh: 226}
         bella:
           label: "Bella"
           note: "US · warm"
-          ref_audio: voices/refs/af_bella.wav
-          target_f0: 209
+          ref_audio: {en: voices/refs/af_bella.wav, zh: voices/refs/zf_xiaobei.wav}
+          target_f0: {en: 209, zh: 226}
         sarah:
           label: "Sarah"
           note: "US · brighter"
-          ref_audio: voices/refs/af_sarah.wav
-          target_f0: 178
+          ref_audio: {en: voices/refs/af_sarah.wav, zh: voices/refs/zf_xiaobei.wav}
+          target_f0: {en: 178, zh: 226}
 
         michael:
           label: "Michael"
           note: "US · deeper"
-          ref_audio: voices/refs/am_michael.wav
-          target_f0: 125
+          ref_audio: {en: voices/refs/am_michael.wav, zh: voices/refs/zm_yunjian.wav}
+          target_f0: {en: 125, zh: 135}
 
         eric:
           label: "Eric"
@@ -117,8 +134,8 @@ backend:
           # clip nearly three times as long. Reads at 140 wpm against Male's
           # 168; add `rate:` here if that is too deliberate on the line.
           note: "US · like Male"
-          ref_audio: voices/refs/am_eric.wav
-          target_f0: 161
+          ref_audio: {en: voices/refs/am_eric.wav, zh: voices/refs/zm_yunjian.wav}
+          target_f0: {en: 161, zh: 135}
 
 languages: [en, zh]
 audio:

@@ -59,6 +59,25 @@ def _multilingual_class():
           "the language and reads Mandarin through the English phonemiser.")
 
 
+def _reference(named: str | None, voice: str) -> Path | None:
+    """The clip to clone: named by the caller, else looked up by voice id.
+
+    Named wins, and a name that does not resolve is refused rather than
+    quietly replaced. The console resolves the clip per voice *and per
+    language* from its profile — a Mandarin line clones a Mandarin speaker —
+    and the two-entry table below knows nothing of that. Rendering against
+    the model's default speaker is not an error anything downstream can see;
+    it is a stranger's voice in the middle of the call.
+    """
+    if named:
+        path = Path(named)
+        if not path.is_absolute():
+            path = ROOT / path
+        return path if path.exists() else None
+    ref = REFS.get(voice)
+    return ref if ref and ref.exists() else None
+
+
 def _model():
     if "m" not in _state:
         import torch
@@ -92,11 +111,14 @@ async def tts(request: Request) -> Response:
     if not lang:
         return Response(status_code=400, content=b"missing lang")
 
-    ref = REFS.get(voice)
+    ref = _reference(body.get("ref_audio"), voice)
+    if ref is None and body.get("ref_audio"):
+        return Response(status_code=400,
+                        content=f"reference clip not found: {body['ref_audio']}".encode())
     t0 = time.time()
     model = _model()
     wav = model.generate(text, language_id=lang,
-                         audio_prompt_path=str(ref) if ref and ref.exists() else None,
+                         audio_prompt_path=str(ref) if ref else None,
                          temperature=0.5)
     audio = np.asarray(wav.squeeze().detach().cpu().numpy(), dtype=np.float32)
     src_sr = int(getattr(model, "sr", 24000))

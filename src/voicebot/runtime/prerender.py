@@ -23,6 +23,25 @@ from ..spoken import segment_by_script
 log = logging.getLogger("voicebot.prerender")
 
 
+def for_language(value: Any, lang: str | None) -> Any:
+    """A per-voice setting that may differ by language.
+
+    A scalar applies to every language, which is what every entry was until
+    the Mandarin references arrived. A mapping is read by the language of the
+    line being rendered — the whole line, so an English address inside a
+    Mandarin sentence is spoken by the Mandarin speaker rather than by a
+    second voice cutting in at the seam — falling back to `en`, then to
+    whatever is listed first, so a voice with only one clip still renders.
+    """
+    if not isinstance(value, dict):
+        return value
+    if lang in value:
+        return value[lang]
+    if "en" in value:
+        return value["en"]
+    return next(iter(value.values()), None)
+
+
 class PrerenderCache:
     #: How many times to re-draw a line whose pitch lands far from the voice.
     #: A build-time budget: at call time the caller is waiting, so a miss is
@@ -84,13 +103,23 @@ class PrerenderCache:
         description, which samples a new speaker on every call."""
         return self._entry(voice).get("speaker")
 
-    def reference_for(self, voice: str | None = None) -> str | None:
+    def reference_for(self, voice: str | None = None,
+                      lang: str | None = None) -> str | None:
         """Reference wav for a cloning model. A fixed file, so the speaker is
         anchored — cloning still drifts more than a named speaker, but the
-        identity is not resampled from scratch on every line."""
-        return self._entry(voice).get("ref_audio")
+        identity is not resampled from scratch on every line.
 
-    def target_f0(self, voice: str | None = None) -> float:
+        Per language where the profile says so. Cloned from an English
+        speaker, a Mandarin line came back from the recogniser with every
+        character right and none of the punctuation: the tones and phrasing
+        were flat, because the voice being imitated had never spoken
+        Mandarin. `ref_audio: {en: ..., zh: ...}` clones a Mandarin call from
+        a Mandarin speaker, and keeps that speaker for the whole call,
+        English fragments included.
+        """
+        return for_language(self._entry(voice).get("ref_audio"), lang)
+
+    def target_f0(self, voice: str | None = None, lang: str | None = None) -> float:
         """Pitch every line of this voice is normalised to, in Hz. 0 disables.
 
         Cloning re-derives the speaker for each line, and short lines give it
@@ -98,11 +127,17 @@ class PrerenderCache:
         ranged 147-193 Hz, which is nearly four semitones and reads as the
         speaker changing mid-conversation. Rendering is a build step, so this
         costs nothing at call time.
+
+        Per language like the reference: a Mandarin clone lands on its own
+        pitch — measured 226 Hz for zf_xiaobei and 135 Hz for zm_yunjian over
+        five scripted lines — and dragging it toward the English voice's
+        figure would be the very drift this exists to remove.
         """
         entry = self._entry(voice)
-        return float(entry.get("target_f0") or self.cfg.get("target_f0") or 0)
+        return float(for_language(entry.get("target_f0"), lang)
+                     or for_language(self.cfg.get("target_f0"), lang) or 0)
 
-    def rate_for(self, voice: str | None = None) -> float:
+    def rate_for(self, voice: str | None = None, lang: str | None = None) -> float:
         """How much to speed this voice up, 1.0 for as rendered.
 
         Cloning copies the reference speaker's *delivery*, not just their
@@ -116,7 +151,8 @@ class PrerenderCache:
         cost; nothing at call time.
         """
         entry = self._entry(voice)
-        return float(entry.get("rate") or self.cfg.get("rate") or 1.0)
+        return float(for_language(entry.get("rate"), lang)
+                     or for_language(self.cfg.get("rate"), lang) or 1.0)
 
     def params_for(self, voice: str | None = None) -> dict[str, Any]:
         """Per-voice generation parameters over profile-wide defaults. A lower
@@ -145,15 +181,15 @@ class PrerenderCache:
         shape = "" if pieces == [(text, lang)] else repr(pieces)
         parts = [self.cfg.get("model", ""), lang, self.lang_code(lang), shape,
                  self.speaker_for(voice) or "",
-                 self.reference_for(voice) or "",
+                 self.reference_for(voice, lang) or "",
                  self.instruct_for(lang, voice),
                  repr(sorted(self.params_for(voice).items())),
-                 f"f0={self.target_f0(voice):.1f}"]
+                 f"f0={self.target_f0(voice, lang):.1f}"]
         # Appended only when the voice is actually paced. An empty element
         # still contributes its separator, so a voice back at its natural
         # speed would miss every line it already has on disk and re-render
         # an identical file under a new name.
-        rate = self.rate_for(voice)
+        rate = self.rate_for(voice, lang)
         if abs(rate - 1.0) > 1e-6:
             parts.append(f"rate={rate:.3f}")
         parts.append(text)
@@ -194,7 +230,8 @@ class PrerenderCache:
             self._model_failed = True
         return self._model
 
-    def normalise_pitch(self, pcm: bytes, voice: str | None) -> bytes:
+    def normalise_pitch(self, pcm: bytes, voice: str | None,
+                        lang: str | None = None) -> bytes:
         """Put this line on the same pitch as every other line of this voice.
 
         Clamped to a fifth of an octave either way: a clip whose pitch could
@@ -203,7 +240,7 @@ class PrerenderCache:
         """
         from .. import pcm as P
 
-        target = self.target_f0(voice)
+        target = self.target_f0(voice, lang)
         if not target:
             return pcm
         got, voiced, spread = P.f0_stats(pcm, self.sample_rate)
@@ -239,7 +276,7 @@ class PrerenderCache:
 
         kwargs: dict[str, Any] = {}
         kwargs.update(self.params_for(voice))
-        ref = self.reference_for(voice)
+        ref = self.reference_for(voice, lang)
         speaker = self.speaker_for(voice)
         if ref:
             kwargs["ref_audio"] = ref          # cloning: anchored to a file
@@ -255,7 +292,7 @@ class PrerenderCache:
         # take the closest of a few attempts, then correct what little is left.
         from .. import pcm as P
 
-        target = self.target_f0(voice)
+        target = self.target_f0(voice, lang)
         best: bytes | None = None
         best_err = float("inf")
         # A Chinese line with an address, an email or a policy number in it is
@@ -309,10 +346,10 @@ class PrerenderCache:
         # the result is what the normaliser is for and it should see the audio
         # that will actually be played.
         pcm = best or b""
-        rate = self.rate_for(voice)
+        rate = self.rate_for(voice, lang)
         if abs(rate - 1.0) > 0.001 and pcm:
             pcm = P.stretch(pcm, rate, self.sample_rate)
-        pcm = self.normalise_pitch(pcm, voice)
+        pcm = self.normalise_pitch(pcm, voice, lang)
         p = self.path(text, lang, voice)
         tmp = p.with_suffix(".tmp")
         with wave.open(str(tmp), "wb") as w:

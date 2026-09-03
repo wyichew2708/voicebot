@@ -245,9 +245,30 @@ def test_the_live_voice_is_put_on_the_same_pitch_as_the_cache(stub):
                                     "prerender": {"voices": {"male": {"target_f0": 162}}}}))
     seen = []
     real = be.prerender.normalise_pitch
-    be.prerender.normalise_pitch = lambda pcm, voice: seen.append(voice) or real(pcm, voice)
+    be.prerender.normalise_pitch = (lambda pcm, voice, lang=None:
+                                    seen.append(voice) or real(pcm, voice, lang))
     asyncio.run(_drain(be.synthesize("No problem.", "en")))
     assert seen == ["male"]
+
+
+def test_the_sidecar_is_told_which_clip_to_clone(stub):
+    """The sidecar kept a two-entry table of voices and looked the clip up by
+    id, so every other voice — and every Mandarin line, which clones a
+    different clip from the English one — was rendered by the model's default
+    speaker. The clip now travels with the request, chosen by the language of
+    the line."""
+    url, S = stub
+    be = CUDABackend(_cfg(url, tts={"base_url": url, "model": "chatterbox",
+                                    "prerender": {"voices": {"male": {
+                                        "ref_audio": {"en": "voices/refs/male.wav",
+                                                      "zh": "voices/refs/zm_yunjian.wav"}}}}}))
+    asyncio.run(_drain(be.synthesize(_ZH_MIXED, "zh")))
+    refs = {b.get("ref_audio") for b in S.tts_bodies}
+    assert refs == {"voices/refs/zm_yunjian.wav"}, refs   # the address piece too
+
+    S.tts_bodies.clear()
+    asyncio.run(_drain(be.synthesize("No problem.", "en")))
+    assert S.tts_bodies[0]["ref_audio"] == "voices/refs/male.wav"
 
 
 async def _drain(gen):

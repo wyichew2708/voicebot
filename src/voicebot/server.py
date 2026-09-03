@@ -31,6 +31,7 @@ from .pcm import trim as trim_silence
 from .recording import Recorder
 from .runtime import load_backend
 from .runtime import warm as warmup_plan
+from .runtime.prerender import for_language
 from . import voices as voice_limits
 from .voices import CustomVoices, VoiceError
 
@@ -184,14 +185,18 @@ def _voice_rows() -> list[dict]:
     rows = []
     for vid, v in _prerender_cfg().get("voices", {}).items():
         mine = custom.get(vid)
+        # A voice may carry a clip and a pitch per language; the picker shows
+        # the English ones, and says separately whether Mandarin has its own.
+        refs = v.get("ref_audio")
         row = {"id": vid, "label": v.get("label", vid),
                "note": v.get("note", ""),
                "custom": mine is not None,
-               "target_f0": float(v.get("target_f0") or 0)}
+               "target_f0": float(for_language(v.get("target_f0"), "en") or 0),
+               "mandarin": isinstance(refs, dict) and "zh" in refs}
         if mine:
             row.update(seconds=mine["seconds"], semitones=mine["semitones"],
                        measured_f0=mine["measured_f0"])
-        row["rate"] = float(v.get("rate") or 1.0)
+        row["rate"] = float(for_language(v.get("rate"), "en") or 1.0)
         # A running job wins: it knows where it is up to, and re-counting the
         # cache underneath it would report progress it has not committed yet.
         job = _warm_state().get(vid)
@@ -201,7 +206,7 @@ def _voice_rows() -> list[dict]:
         # Whether there is anything to play. A control that silently does
         # nothing is worse than no control, so the picker hides the button
         # rather than offering a 404.
-        ref = v.get("ref_audio")
+        ref = for_language(refs, "en")
         row["sample"] = bool(row["warm"]["done"] or (ref and Path(ref).exists()))
         rows.append(row)
     return rows
@@ -294,7 +299,7 @@ async def voice_sample(vid: str) -> Response:
                         media_type="audio/wav",
                         headers={"Cache-Control": "no-store", "X-Sample": "rendered"})
 
-    ref = voices[vid].get("ref_audio")
+    ref = for_language(voices[vid].get("ref_audio"), "en")
     if ref and Path(ref).exists():
         return FileResponse(ref, media_type="audio/wav",
                             headers={"Cache-Control": "no-store",

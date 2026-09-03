@@ -163,14 +163,21 @@ class CUDABackend(Backend):
         return Speech(voice_source="live", pcm=b"".join(chunks), sample_rate=self.sample_rate,
                       latency_ms=int((time.perf_counter() - t0) * 1000))
 
-    def _speak_one(self, piece: str, lang_code: str, voice: str) -> bytes:
-        """One fragment, one language, from the sidecar."""
+    def _speak_one(self, piece: str, lang_code: str, voice: str,
+                   ref: str | None = None) -> bytes:
+        """One fragment, one language, from the sidecar.
+
+        The reference clip travels with the request. The sidecar used to keep
+        a two-entry table of its own, so every other voice — and every
+        Mandarin line, which clones a different clip from the English one —
+        fell back to the model's default speaker without a word of complaint.
+        """
         url = self.cfg.get("tts", {}).get("base_url", "").rstrip("/") + "/tts"
-        payload = json.dumps({
-            "text": piece, "lang": lang_code, "voice": voice,
-            "sample_rate": self.sample_rate,
-        }).encode()
-        raw = self._post(url, payload, "application/json")
+        body: dict[str, Any] = {"text": piece, "lang": lang_code, "voice": voice,
+                                "sample_rate": self.sample_rate}
+        if ref:
+            body["ref_audio"] = ref
+        raw = self._post(url, json.dumps(body).encode(), "application/json")
         with wave.open(io.BytesIO(raw)) as w:
             if w.getframerate() != self.sample_rate:
                 log.warning("TTS returned %d Hz, expected %d",
@@ -191,19 +198,23 @@ class CUDABackend(Backend):
 
         voice = voice or self.prerender.default_voice()
         pieces = segment_by_script(text, lang)
+        # The line's language picks the speaker, not the piece's: an address
+        # inside a Mandarin sentence is read by the Mandarin speaker, as it is
+        # in the cache, rather than by a second voice at the seam.
+        ref = self.prerender.reference_for(voice, lang)
 
         def _work() -> bytes:
             out = bytearray()
             for i, (piece, piece_lang) in enumerate(pieces):
                 part = self._speak_one(piece, self.prerender.lang_code(piece_lang),
-                                       voice)
+                                       voice, ref)
                 if len(pieces) > 1:
                     part = P.trim(part, head=(i > 0), tail=(i < len(pieces) - 1),
                                   keep_ms=10, sample_rate=self.sample_rate)
                     if i:
                         out += P.silence(40, self.sample_rate)
                 out += part
-            return self.prerender.normalise_pitch(bytes(out), voice)
+            return self.prerender.normalise_pitch(bytes(out), voice, lang)
 
         try:
             pcm = await self._run(_work)

@@ -350,6 +350,27 @@ fixed reference clip:
 
 Voice is **fixed for the duration of a call**. Pick before dialling.
 
+### Mandarin is cloned from a Mandarin speaker
+
+Cloned from the English clip, a Mandarin line came back from the recogniser with every character
+right and none of the punctuation — the tones and phrasing were flat, because the speaker being
+imitated had never spoken Mandarin. Each voice therefore names a clip per language:
+
+```yaml
+male:
+  ref_audio: {en: voices/refs/male.wav, zh: voices/refs/zm_yunjian.wav}
+  target_f0: {en: 162, zh: 135}
+```
+
+Every male voice clones Kokoro's `zm_yunjian` for Mandarin and every female voice `zf_xiaobei` —
+Kokoro's own speakers reading a Mandarin paragraph, chosen by ear from a side-by-side of the
+English-reference clone, Kokoro direct, and the Mandarin-reference clone. The **line's** language
+picks the clip, so a call opened in Mandarin keeps one speaker throughout, English fragments
+included, and `target_f0` is measured per clip over five scripted lines. A scalar still means "every
+language"; a voice recorded in the console has one clip and renders Mandarin from it as before.
+English cache keys are untouched by any of this — only the Mandarin lines re-render under
+`make prerender`.
+
 ### Speaker drift, honestly
 
 Cloning is anchored to a file rather than resampled per line, which is what VoiceDesign got wrong.
