@@ -7,12 +7,22 @@ spells half the address, corrects themselves and starts again, or a domain
 said as a word in one breath and letter by letter in the next. There is no
 list of those. That is what a model is for.
 
-**The model extracts; it does not speak.** What comes back is a candidate
-string that must match an address pattern, and the caller then hears it read
-back in fixed wording and says yes or no before anything reaches the record.
-So the failure mode is a wasted turn, never a wrong address written to a
-customer's policy — the same trade as `call/router.py`, where the model picks
-a handler and the handler owns the words.
+**The model extracts; it does not speak, and it no longer writes.** The bot
+stopped taking address changes down over the phone — those go to customer care
+— so what this produces is a *suggestion attached to the handoff*, for the
+colleague who will confirm it with the customer on a channel where they can
+see the characters.
+
+That is a deliberate narrowing, and the reason is in the measurements. Warm and
+on a quiet machine the model reads these correctly and fast: "w. y, i, alias
+hotmail dot com." came back as wyi@hotmail.com in 1.97 s, and the messier
+second attempt in 0.94 s. But asked to read "w. y. i. alias h. o. t. m. a. i.
+l. dot z. o. m." it returned **wyi@hotmail.zom** — confident, well-formed,
+passing every validation here, and wrong. It was right not to invent "com"
+from "zom"; there is no rule that would let it. A person hears "zom" and
+catches it instantly. So the model is good enough to save a colleague typing,
+and not good enough to be the last check on the field that decides whether the
+renewal notice arrives at all.
 """
 from __future__ import annotations
 

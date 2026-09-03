@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import Any, Iterator
 
 from ..call import handoff, script
-from ..call.engine import EMAIL_CONFIRM, EMAIL_ONLY_ONE, prerenderable_lines
+from ..call.engine import prerenderable_lines
 from ..data import personas
 from ..data.facts import policy_answers, price_answer
 from ..knowledge.answer import spoken_lines
@@ -47,9 +47,18 @@ def plan(langs: list[str], registers: list[str],
                     if lang != "en" and register == "singlish":
                         continue             # Singlish register is English-only
                     for turn in range(1, 8):
-                        text = script.render(turn, policy, lang,
-                                             agent_name=agent, register=register)
-                        add(text, lang, voice)
+                        # Both forms of a turn that asks something: with its
+                        # question, and without it for a caller who has already
+                        # answered. A miss here is two seconds of silence in
+                        # the middle of the turn it saves.
+                        asked = script.TURNS[turn - 1].ask
+                        for answered in ((frozenset(), frozenset({asked}))
+                                         if asked else (frozenset(),)):
+                            text = script.render(turn, policy, lang,
+                                                 agent_name=agent,
+                                                 register=register,
+                                                 answered=answered)
+                            add(text, lang, voice)
                         # Turn 4 is also warmed split, because the email slot
                         # can change mid-call and only the tail should have to
                         # be rendered when it does.
@@ -81,11 +90,11 @@ def plan(langs: list[str], registers: list[str],
             for lang in langs:
                 for text in policy_answers(policy, lang).values():
                     add(text, lang, voice)
-                add(EMAIL_CONFIRM[lang].format(email=policy.email), lang, voice)
-                # Carries the caller's own address, so it is per-policy too.
-                add(EMAIL_ONLY_ONE[lang].format(email=policy.email), lang, voice)
-                add({"en": f"Updated — I'll send it to {policy.email}.",
-                     "zh": f"已经更新了，我会发到 {policy.email}。"}[lang], lang, voice)
+                # The read-back, the "only one on file" line and the update
+                # confirmation were warmed here until the bot stopped capturing
+                # address changes at all. Nothing can reach them now, and a
+                # warm pass that renders lines no call can play is a slower
+                # build and a larger cache for nothing.
                 # The reachability question carries the caller's own number.
                 add(handoff.reachable(policy.phone, lang), lang, voice)
                 # The discount answer quotes this policy's own figures.

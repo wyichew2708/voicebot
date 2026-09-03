@@ -72,6 +72,12 @@ class AgentAudio(Event):
     sends these as binary frames alongside the transcript."""
     pcm: bytes
     sample_rate: int
+    #: Where this sits in one utterance. A line synthesised in pieces arrives
+    #: as several of these: the transport opens the utterance on `start` and
+    #: closes it on `final`, so the player appends instead of reloading. A
+    #: line produced in one go carries both and behaves exactly as before.
+    start: bool = True
+    final: bool = True
     kind: str = field(default="audio", init=False)
 
 

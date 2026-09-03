@@ -117,6 +117,9 @@
            background-image: var(--ic-play); background-size: 12px 12px;
            background-position: 55% 50%; background-repeat: no-repeat; }
   .vplay:hover { border-color: var(--accent); }
+  .namerow { display: flex; gap: .4rem; }
+  .namerow select { flex: 0 0 5.5rem; }
+  .namerow input { flex: 1; min-width: 0; }
   .vpickhint { margin-top: 6px; font-size: 10.5px; line-height: 1.45; color: var(--muted); }
   /* A cold voice is the single biggest latency cliff in the console — 13.6 s
      on a turn that reads from a warm cache in 5 ms. It gets a warning, not a
@@ -505,6 +508,17 @@
         <div class="field">
           <label class="fieldlab" for="selPersona">Who we are calling</label>
           <select id="selPersona"></select>
+        </div>
+        <div class="field">
+          <label class="fieldlab" for="inName">Surname &mdash; try a pronunciation</label>
+          <div class="namerow">
+            <select id="selSal" aria-label="Salutation">
+              <option>Mr</option><option>Ms</option><option>Mrs</option><option>Mdm</option>
+            </select>
+            <input id="inName" type="text" autocomplete="off" spellcheck="false"
+                   placeholder="blank = use the record">
+          </div>
+          <div class="vpickhint" id="nameHint"></div>
         </div>
         <div class="field">
           <span class="fieldlab">Opening language</span>
@@ -908,17 +922,35 @@ speech. Each setting is a multiple of the measured room level."></div>
       settled = true; clearTimeout(giveUp); live = true; setConn("on", "LIVE"); refreshHealth();
     };
     ws.onmessage = function (m) {
-      if (typeof m.data !== "string") { if (incoming) incoming.push(new Int16Array(m.data)); return; }
+      if (typeof m.data !== "string") {
+        if (incoming) {
+          var frame = new Int16Array(m.data);
+          incoming.push(frame);
+          if (streamOn) feedStream(frame);
+        }
+        return;
+      }
       var e = JSON.parse(m.data);
-      if (e.kind === "audio_begin") { incoming = []; incoming.rate = e.sample_rate; return; }
+      if (e.kind === "audio_begin") {
+        incoming = []; incoming.rate = e.sample_rate;
+        streamOn = beginStream(e.sample_rate);
+        if (streamOn) {
+          $("player").classList.add("on");
+          $("player").classList.remove("blocked");
+          setSpeaker("a");
+        }
+        return;
+      }
       if (e.kind === "audio_end") {
-        if (incoming && incoming.length) {
-          var n = incoming.reduce(function (a, b) { return a + b.length; }, 0);
+        var n = incoming ? incoming.reduce(function (a, b) { return a + b.length; }, 0) : 0;
+        if (n) {
           var all = new Int16Array(n), off = 0;
           incoming.forEach(function (c) { all.set(c, off); off += c.length; });
-          play(all, incoming.rate || 16000);
+          // Already heard it as it arrived — just make it scrubbable.
+          if (streamOn) { endStream(); loadForReplay(all, incoming.rate || 16000); }
+          else play(all, incoming.rate || 16000);
         }
-        incoming = null; return;
+        streamOn = false; incoming = null; return;
       }
       if (e.kind === "call_started") return;
       apply(e);
@@ -1392,6 +1424,48 @@ speech. Each setting is a multiple of the measured room level."></div>
     if (!running) selectPersona(+e.target.value);
   });
 
+  // ---------------------------------------------------- surname override
+  // The interesting part of a name is invisible in the transcript: it always
+  // reads "Mr Tan", and only the synthesiser is ever handed "Mr Dan". So the
+  // hint shows what the voice will actually get, and says when the name will
+  // be left out because no spelling of it works.
+
+  var nameTimer = null;
+
+  function nameOverride() {
+    var v = ($("inName").value || "").trim();
+    return v ? { surname: v, salutation: $("selSal").value } : null;
+  }
+
+  function refreshNameHint() {
+    var over = nameOverride();
+    var hint = $("nameHint");
+    if (!over) { hint.textContent = ""; return; }
+    fetch("/api/name?surname=" + encodeURIComponent(over.surname) +
+          "&salutation=" + encodeURIComponent(over.salutation) +
+          "&lang=" + encodeURIComponent(lang))
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (d.error) { hint.textContent = ""; return; }
+        if (!d.sayable) {
+          hint.textContent = "No spelling of this one sounds right — the call "
+            + "will address them without it.";
+          return;
+        }
+        var said = d.spoken_as;
+        hint.textContent = said === (over.salutation + " " + over.surname)
+          ? "Spoken as written."
+          : "Spoken to the voice as \u201c" + said + "\u201d.";
+      })
+      .catch(function () { hint.textContent = ""; });
+  }
+
+  $("inName").addEventListener("input", function () {
+    clearTimeout(nameTimer);
+    nameTimer = setTimeout(refreshNameHint, 250);
+  });
+  $("selSal").addEventListener("change", refreshNameHint);
+
   // ------------------------------------------------------------ call state
 
   function fmt(ms) {
@@ -1417,8 +1491,11 @@ speech. Each setting is a multiple of the measured room level."></div>
     $("cstate").textContent = "Connected";
     t0 = Date.now();
     tick = setInterval(function () { $("ctimer").textContent = fmt(Date.now() - t0); }, 500);
+    var over = nameOverride();
     send({ type: "start", policy_id: p.policy_id, register: register,
-           voice: voice, lang: lang });
+           voice: voice, lang: lang,
+           surname: over ? over.surname : null,
+           salutation: over ? over.salutation : null });
     $("txCount").textContent = callCount + (callCount === 1 ? " call" : " calls");
     if (!simulated) { $("talkbar").classList.add("on"); $("callerInput").focus(); }
   }
@@ -1513,7 +1590,10 @@ speech. Each setting is a multiple of the measured room level."></div>
     new Int16Array(buf, 44).set(int16);
     return new Blob([buf], { type: "audio/wav" });
   }
-  function stopPlayback() { if (audioEl) { try { audioEl.pause(); } catch (e) {} } }
+  function stopPlayback() {
+    stopStream();
+    if (audioEl) { try { audioEl.pause(); } catch (e) {} }
+  }
   function play(int16, rate) {
     var el = ensureAudio();
     stopPlayback();
@@ -1525,6 +1605,92 @@ speech. Each setting is a multiple of the measured room level."></div>
     setSpeaker("a");
     var p = el.play();
     if (p && p.catch) p.catch(function () { $("player").classList.add("blocked"); setSpeaker(null); });
+  }
+
+  // ---------------------------------------------------- streaming playback
+  // A line the cache has never seen is synthesised in pieces and starts
+  // arriving while the rest is still being made. Scheduling each piece
+  // against the audio clock is what keeps the joins inaudible — a media
+  // element can only be handed a finished file, so it would have to wait for
+  // the last chunk before playing the first, which is the silence this is
+  // here to remove. The media element stays as the fallback, because Web
+  // Audio has reported success and produced no sound in some browsers here.
+
+  var actx = null, playHead = 0, streamSrcs = [], streamOn = false;
+  var pend = [], pendN = 0, pendRate = 16000;
+
+  //: Schedule in batches rather than per 20 ms frame. Below about this much
+  //: audio the scheduling jitter is audible as a stutter; far above it the
+  //: first sound is needlessly late.
+  var FLUSH_SEC = 0.24;
+  //: How far ahead of the clock the first piece is placed, to absorb the
+  //: gap between frames arriving.
+  var LEAD_SEC = 0.08;
+
+  function ensureCtx() {
+    if (actx) return actx;
+    var C = window.AudioContext || window.webkitAudioContext;
+    if (!C) return null;
+    try { actx = new C(); } catch (e) { return null; }
+    return actx;
+  }
+
+  function beginStream(rate) {
+    var ctx = ensureCtx();
+    if (!ctx) return false;
+    if (ctx.state === "suspended") { try { ctx.resume(); } catch (e) {} }
+    // A context that will not start is the failure the media element covers.
+    if (ctx.state !== "running") return false;
+    stopStream();
+    pend = []; pendN = 0; pendRate = rate || 16000;
+    playHead = 0;
+    return true;
+  }
+
+  function feedStream(frame) {
+    pend.push(frame); pendN += frame.length;
+    if (pendN / pendRate >= FLUSH_SEC) flushStream();
+  }
+
+  function flushStream() {
+    if (!pendN || !actx) return;
+    var all = new Int16Array(pendN), off = 0;
+    pend.forEach(function (c) { all.set(c, off); off += c.length; });
+    pend = []; pendN = 0;
+    var buf = actx.createBuffer(1, all.length, pendRate);
+    var ch = buf.getChannelData(0);
+    for (var i = 0; i < all.length; i++) ch[i] = all[i] / 32768;
+    var src = actx.createBufferSource();
+    src.buffer = buf; src.connect(actx.destination);
+    var now = actx.currentTime;
+    // Underrun: synthesis fell behind playback. Resume from now rather than
+    // scheduling in the past, which would drop the piece entirely.
+    if (playHead < now + LEAD_SEC) playHead = now + LEAD_SEC;
+    try { src.start(playHead); } catch (e) { return; }
+    playHead += buf.duration;
+    streamSrcs.push(src);
+    src.onended = function () {
+      var i = streamSrcs.indexOf(src);
+      if (i >= 0) streamSrcs.splice(i, 1);
+      if (!streamSrcs.length && speaker === "a") setSpeaker(null);
+    };
+  }
+
+  function endStream() { flushStream(); }
+
+  function stopStream() {
+    streamSrcs.forEach(function (s) { try { s.onended = null; s.stop(); } catch (e) {} });
+    streamSrcs = []; pend = []; pendN = 0; playHead = 0;
+  }
+
+  // The visible player is still handed the finished utterance, so the operator
+  // can scrub back through a line they have already heard. Loaded, not played.
+  function loadForReplay(int16, rate) {
+    var el = ensureAudio();
+    if (audioUrl) URL.revokeObjectURL(audioUrl);
+    audioUrl = URL.createObjectURL(wavBlob(int16, rate));
+    el.src = audioUrl;
+    $("player").classList.add("on");
   }
 
   // ------------------------------------------------------------------ mic
@@ -1550,11 +1716,14 @@ speech. Each setting is a multiple of the measured room level."></div>
   // the floor margin — so without this the recogniser is handed a clipped
   // first syllable and either mis-hears it or rejects the buffer.
   var RUNUP_MS = 320;
-  // Matches the server's own voiced-duration floor. Stricter here meant a
-  // short reply was dropped in the browser and never reached the gate that
-  // was designed to judge it: "yes" and "对" are ~250 ms of voiced audio, and
-  // the caller had to say a whole sentence before anything happened.
-  var MIN_VOICED_MS = 180;
+  // Deliberately *below* the server's floor, not equal to it. The two count
+  // voiced frames differently — here against the measured room level, there
+  // against 15% of the buffer's own peak — so the same "yes" can clear 180 ms
+  // in the browser and measure 0.14 s on the server. Matching the numbers
+  // looked like agreement and was not: the browser passed the utterance, the
+  // server dropped it, and the caller got silence with no idea why. The server
+  // owns the decision; this only exists to avoid shipping obvious noise.
+  var MIN_VOICED_MS = 80;
   // Cutting the agent off is destructive — the caller loses the sentence and
   // has to ask for it again. So interrupting takes more evidence than merely
   // starting to listen does: louder than the room, and sustained.

@@ -18,7 +18,8 @@ from ..compliance.gates import (CallState, Gates, check_advice, check_dnc,
 from ..knowledge.policy import Serving, default_serving
 from ..data.facts import (RENEWAL_PROCESS, coverage_lookup, is_advice_request,
                           is_price_request, is_procedure_request, policy_answer,
-                          policy_topic, price_answer, spoken_email,
+                          policy_topic, price_answer,
+                          wants_record_change,
                           wants_email_change)
 from ..data.personas import Policy
 from ..lang import asks_for as lang_request
@@ -37,6 +38,7 @@ from .reactions import all_lines as reaction_lines
 from ..events import (AgentAudio, CallEnded, Event, GateChange, HandoffRequested,
                       Status, SystemNote, ToolCall, Transcript, TurnChange)
 from .. import pcm
+from ..spoken import speech_chunks, speech_seconds
 from ..runtime.base import Backend
 from . import script
 
@@ -55,30 +57,6 @@ WRONG_PARTY_REPLY = {
     "zh": "我明白了，谢谢。我不能与保单持有人以外的人讨论账户详情。可以麻烦您转告他，请他方便时致电 6887 8777。",
 }
 
-EMAIL_ASK = {
-    "en": "Of course — could you give me the email address you'd like us to use? "
-          "Please say it slowly and I'll read it back.",
-    "zh": "没问题。请您慢慢说一下要改成哪个电邮地址，我会重复一遍跟您确认。",
-}
-
-EMAIL_CONFIRM = {
-    "en": "Thank you. I have {email} — is that right?",
-    "zh": "谢谢。我记下的是 {email}，请问对吗？",
-}
-
-#: Said when we could hear them spelling but could not assemble an address.
-#: "Say it again, slowly" is the wrong ask when they *were* saying it slowly.
-#: The caller expects us to already have the address they want us to use. We
-#: only ever hold the old one, and saying so is the honest answer — reading
-#: "say it again, slowly" at someone who has just told us we should know is
-#: the machine confirming it is not listening.
-EMAIL_ONLY_ONE = {
-    "en": ("The only address on your policy is {email}, so the new one would "
-           "have to come from you. Take your time — the part before the at "
-           "sign first."),
-    "zh": ("您保单上只有 {email} 这个地址，新的还是要麻烦您告诉我。您慢慢说，"
-           "先说 at 前面那一段就好。"),
-}
 
 #: "Why is that?" asked of the cross-sell offer. The caller is asking about
 #: the thing we just raised, so it gets an answer and the question again —
@@ -90,25 +68,6 @@ CROSS_SELL_WHAT = {
     "zh": "是关于个人意外险的，二十秒就好，您不想听我就跳过。要我说吗？",
 }
 
-EMAIL_PARTIAL = {
-    "en": "Sorry — I got some of that but not all of it. Could you give me the "
-          "part before the at sign first, letter by letter?",
-    "zh": "不好意思，我只听到一部分。可以先一个字母一个字母地告诉我 at 之前的部分吗？",
-}
-
-EMAIL_RETRY = {
-    "en": "Sorry, I didn't catch that. Could you say the address again, slowly?",
-    "zh": "不好意思，我没听清楚。可以请您再慢慢说一次吗？",
-}
-
-EMAIL_HANDOFF = {
-    "en": "I'd rather not risk getting that wrong — if the address is off by one "
-          "character you won't receive the renewal notice at all. I'll have a "
-          "colleague call you back to update it, and send this renewal to the "
-          "address currently on file.",
-    "zh": "我不想弄错这个地址，因为只要错一个字母，您就收不到续保通知了。"
-          "我会安排同事回电帮您更新，这次的续保先寄到目前记录的邮箱。",
-}
 
 LANG_BRIDGE = {
     "zh": "当然可以，我们用华语继续。",
@@ -348,15 +307,15 @@ def prerenderable_lines(agent_name: str = script.DEFAULT_AGENT) -> list[tuple[st
     out: list[tuple[str, str]] = list(reaction_lines())
     for lang, leads in REPEAT_LEAD.items():
         out.extend((lead, lang) for lead in leads)
-    for table in (ESCALATION, WRONG_PARTY_REPLY, EMAIL_ASK, EMAIL_HANDOFF,
-                  LANG_BRIDGE, REPEAT_HANDOFF, CALLBACK_REPLY, EMAIL_RETRY,
+    for table in (ESCALATION, WRONG_PARTY_REPLY,
+                  LANG_BRIDGE, REPEAT_HANDOFF, CALLBACK_REPLY,
                   SLOWER_ACK, SLOWEST_ACK, CLARIFY, GREETING_REPLY,
                   ADVISER_BOOKED, ADVISER_DECLINED, ALREADY_SAID,
                   RENEWAL_PROCESS, PURPOSE,
                   PURPOSE_AGAIN,
                   CROSS_SELL_ASK, CROSS_SELL_WHAT, BOT_DISCLOSURE, DNC_ACK,
                   COVERAGE_UNKNOWN, THINKING,
-                  CROSS_SELL_DECLINED, APOLOGY, EMAIL_PARTIAL, NOTICE_MISSING,
+                  CROSS_SELL_DECLINED, APOLOGY, NOTICE_MISSING,
                   OFFICER_OFFER):
         out.extend((text, lang) for lang, text in table.items())
     out.extend(ho.all_lines())
@@ -383,10 +342,15 @@ def _looks_tamil(text: str) -> bool:
     who can — the same position we are in with Malay.
 
     Requires more than one character so a single stray glyph out of the
-    recogniser does not end an English call in a transfer.
+    recogniser does not end an English call in a transfer. Two was still not
+    enough: on a recorded call a caller who had spoken English throughout
+    produced "ஆன் நோம்" — two short words, almost certainly a mis-recognition —
+    and the call ended in a transfer they never asked for. Handing off is not
+    reversible, so it takes the same kind of evidence barge-in does: enough of
+    the utterance to be a sentence rather than a fragment.
     """
     tamil = sum(1 for ch in text if "\u0b80" <= ch <= "\u0bff")
-    return tamil >= 2
+    return tamil >= 6
 
 
 def _looks_malay(text: str) -> bool:
@@ -437,8 +401,6 @@ class CallSession:
         # Consecutive turns heard in another language. One is not evidence.
         self._other_lang_turns = 0
         # Email correction sub-dialogue: None | "listening" | "confirming"
-        self._email_state: str | None = None
-        self._pending_email: str | None = None
         #: Whether the read-back has already been put a second time.
         self._confirm_reasked = False
         #: Consent to hear the cross-sell, given explicitly. Nothing else
@@ -446,7 +408,6 @@ class CallSession:
         self._cross_sell_ok = False
         self._cross_sell_asked_twice = False
         self._lang_turns_before = 0
-        self._email_attempts = 0
         # What the caller last said, and what we have already said back. Both
         # feed the acknowledgement that opens the next line.
         self._last_caller: str | None = None
@@ -463,10 +424,21 @@ class CallSession:
         self._unanswered: str | None = None
         # Facts the caller asked for before the script reached them.
         self._answered: set[str] = set()
+        #: Consecutive replies that looked like a language we cannot speak.
+        #: Reset by anything we could read, so one artefact does not count.
+        self._foreign = 0
         self._said_already = False
         # Set if any line had to fall back to the live voice — a different
         # speaker from the rest of the call.
         self._fell_back = False
+        # Measured synthesis rate, seconds of work per second of audio.
+        # None until this call has actually synthesised something.
+        self._rtf: float | None = None
+        #: Confirmations the caller has already given, by the `ask` name on
+        #: the turn that would otherwise seek them. A turn whose question is
+        #: in here is spoken without it. Nothing is skipped — the disclosure
+        #: still happens — but the call stops asking what it has been told.
+        self._answered: set[str] = set()
         #: Set once the call is being given to a person. Blocks the rest of
         #: the script, and the cross-sell above all.
         self.handoff: ho.Handoff | None = None
@@ -475,7 +447,6 @@ class CallSession:
         self._advice_raised = False
         #: Everything we heard while trying to take an address down, so a
         #: colleague picking the call up has the caller's own words.
-        self._email_heard: list[str] = []
         self._notice_missing = False
         self._identified = 0
         self._purposes = 0
@@ -494,7 +465,8 @@ class CallSession:
         return Transcript(
             speaker="agent",
             text=script.render(turn, self.p, self.lang, self.part_of_day,
-                               agent_name=self.agent_name, register=self.register),
+                               agent_name=self.agent_name, register=self.register,
+                             answered=frozenset(self._answered)),
             lang=self.lang.upper(),
             source=script.source_label(turn),
             latency_ms=latency_ms,
@@ -596,6 +568,145 @@ class CallSession:
         self._bridged_last = True
         return line
 
+    def _utterance_text(self, parts: list[str]) -> str:
+        """How the parts read as one line, without synthesising anything."""
+        if not parts:
+            return ""
+        text = parts[0]
+        for nxt in parts[1:]:
+            text = f"{text} {_join_case(text, nxt)}"
+        return text
+
+    async def _voice_stream(self, *parts: str | None
+                            ) -> AsyncIterator[tuple[bytes, int, int, bool, bool]]:
+        """One utterance as (pcm, rate, latency_ms, first, final) pieces.
+
+        `_voice` waits for every part before the caller hears anything, which
+        is the right trade when all of them are cache hits and wrong when any
+        of them is not: synthesis returns nothing until the whole line is
+        done, so a six-second line is four seconds of silence.
+
+        Cut into chunks the first is heard in about a second, and because
+        generation runs at roughly 0.8x real time the rest are made while the
+        earlier ones play. That is what lets an unforeseen line — a name that
+        was never pre-rendered, an answer assembled at call time — be spoken
+        at conversational speed without a template behind it.
+
+        The whole plan is known before the first chunk is synthesised, so each
+        piece can be told whether it closes the utterance without holding it
+        back to look at the next one.
+        """
+        said = [self._accommodate(x) for x in parts if x]
+        # Chunk only when synthesis has been measured fast enough to sustain
+        # it. Above 1x the arithmetic is against us: total synthesis exceeds
+        # total audio, so playback catches up and the line gaps in the middle,
+        # which is worse than the slower start chunking was meant to fix.
+        plan = self._stream_plan(said)
+        if not plan:
+            return
+        # Queued up front rather than one at a time. The backend synthesises on
+        # a single worker so they run in order either way, but submitting now
+        # means chunk i+1 starts the instant i's synthesis ends, instead of
+        # waiting for i to be trimmed, paced and pushed out over the socket.
+        jobs = [asyncio.ensure_future(
+            self.backend.speak(chunk, self.lang, prerendered=True, voice=self.voice))
+            for chunk in plan]
+        rate: int | None = None
+        try:
+            for i, job in enumerate(jobs):
+                sp = await job
+                if rate is None:
+                    rate = sp.sample_rate
+                yield self._chunk_out(sp, i, len(plan), rate)
+        finally:
+            # Barge-in abandons this generator mid-line; nothing should keep
+            # synthesising a sentence the caller has already talked over.
+            for job in jobs:
+                if not job.done():
+                    job.cancel()
+
+    #: What a second of audio is assumed to cost before this call has measured
+    #: it. Pessimistic on purpose: an unmeasured machine splits a line only
+    #: when the pieces ahead of the synthesised one are already on disk, and so
+    #: cost nothing to play.
+    STREAM_RTF_ASSUMED = 1.5
+
+    def _cached(self, chunk: str) -> bool:
+        probe = getattr(self.backend, "cached", None)
+        if probe is None:
+            return False
+        try:
+            return bool(probe(chunk, self.lang, self.voice))
+        except Exception:                   # pragma: no cover - never fatal
+            return False
+
+    def _stream_plan(self, said: list[str]) -> list[str]:
+        """How to cut this utterance up — or `said` unchanged, to send it whole.
+
+        Splitting pays only while each piece is finished before the audio ahead
+        of it stops playing. A piece already on disk costs nothing and hands
+        its whole duration to the pieces after it; a piece that has to be made
+        spends `rtf` seconds of that budget for every second it adds. If any
+        piece would run the budget out, the line drops in the middle, and sent
+        whole it merely starts late — so whole is the better of the two.
+
+        The first piece is exempt. Waiting for it is the head latency this is
+        trying to shorten, not a hole in the middle of a sentence.
+
+        This is what makes a line worth rewording. "Good afternoon. This is
+        Michael calling from Etiqa Insurance." is the same for every customer
+        and can be warmed; put the name last and those four cached seconds pay
+        for synthesising the name, on a machine far too slow to stream a line
+        made entirely from scratch.
+        """
+        chunks = [c for part in said for c in speech_chunks(part, self.lang)]
+        if len(chunks) <= len(said):
+            return list(said)
+        rtf = self._rtf if self._rtf is not None else self.STREAM_RTF_ASSUMED
+        budget = 0.0
+        for i, chunk in enumerate(chunks):
+            seconds = speech_seconds(chunk, self.lang)
+            cost = 0.0 if self._cached(chunk) else rtf * seconds
+            if i:
+                if cost > budget:
+                    return list(said)
+                budget -= cost
+            budget += seconds
+        return chunks
+
+    def _observe_rtf(self, sp, rate: int) -> None:
+        """Learn the synthesis rate from a line we actually synthesised.
+
+        Cache hits are excluded deliberately: they return in a millisecond and
+        would report a rate no synthesiser can meet, turning chunking on for
+        the one line that then has to be made from scratch.
+        """
+        if getattr(sp, "voice_source", "cache") == "cache":
+            return
+        seconds = len(sp.pcm) / 2 / max(1, rate)
+        if seconds <= 0.2:                 # too short to measure anything by
+            return
+        seen = (sp.latency_ms / 1000) / seconds
+        # Weighted to the recent past: a box that has just become busy should
+        # stop splitting lines before it has gapped several of them.
+        self._rtf = seen if self._rtf is None else (0.5 * self._rtf + 0.5 * seen)
+
+    def _chunk_out(self, sp, i: int, total: int, rate: int
+                   ) -> tuple[bytes, int, int, bool, bool]:
+        """One synthesised chunk, ready to send."""
+        self._note_voice(sp)
+        self._observe_rtf(sp, rate)
+        # Never mix rates inside one utterance. Substituting silence rather
+        # than skipping keeps the closing piece the closing piece.
+        buf = sp.pcm if sp.sample_rate == rate else b""
+        # Same trimming as the joined path: TTS padding left in at a seam
+        # sounds like the line dropped between one half and the next.
+        buf = pcm.trim(buf, head=(i > 0), tail=(i < total - 1), sample_rate=rate)
+        if i:
+            buf = pcm.silence(120, rate) + buf
+        return (self._paced(buf, rate), rate, sp.latency_ms,
+                i == 0, i == total - 1)
+
     async def _generated(self, *parts: str | None) -> AsyncIterator[Event]:
         """An unscripted line, in the same voice as every other line.
 
@@ -604,11 +715,21 @@ class CallSession:
         costs a render, which is a second or two once. The live model is a
         different speaker, and a call that changes voice halfway through is
         worse than a call that pauses.
+
+        Streamed, because this is the path that carries the lines no cache can
+        hold. The latency reported is time to the *first* audio, which is what
+        the caller actually waits through.
         """
-        full, buf, sr, ms = await self._voice(*parts)
-        yield Transcript(speaker="agent", text=full, lang=self.lang.upper(),
-                         source="pre-rendered", latency_ms=self._elapsed_ms(ms))
-        yield AgentAudio(pcm=buf, sample_rate=sr)
+        said = [self._accommodate(x) for x in parts if x]
+        full = self._utterance_text(said)
+        ms = 0
+        async for buf, sr, chunk_ms, first, final in self._voice_stream(*parts):
+            ms += chunk_ms
+            if first:
+                yield Transcript(speaker="agent", text=full,
+                                 lang=self.lang.upper(), source="pre-rendered",
+                                 latency_ms=self._elapsed_ms(ms))
+            yield AgentAudio(pcm=buf, sample_rate=sr, start=first, final=final)
 
     # --------------------------------------------------------------- start
 
@@ -620,10 +741,33 @@ class CallSession:
         # The opening line needs audio like every other turn — without this the
         # bot answers the phone in silence.
         text = script.render(1, self.p, self.lang, self.part_of_day,
-                             agent_name=self.agent_name, register=self.register)
-        _, buf, sr, ms = await self._voice(text)
-        yield self._say(1, latency_ms=ms)
-        yield AgentAudio(pcm=buf, sample_rate=sr)
+                             agent_name=self.agent_name, register=self.register,
+                             answered=frozenset(self._answered))
+        # Streamed: this line carries the customer's name, so it is the one
+        # scripted turn that cannot be fully warmed for an unknown caller.
+        ms = 0
+        async for buf, sr, chunk_ms, first, final in self._voice_stream(text):
+            ms += chunk_ms
+            if first:
+                yield self._say(1, latency_ms=ms)
+            yield AgentAudio(pcm=buf, sample_rate=sr, start=first, final=final)
+
+    async def unheard(self) -> AsyncIterator[Event]:
+        """The caller said something and the gate could not use it.
+
+        Silence is the one reply that makes a caller repeat themselves louder
+        and longer, which is exactly what a gate tuned slightly too tight
+        produces: a recorded session dropped five answers in a row — 0.12 to
+        0.16 s of voiced audio each, every one of them a "yes" — and said
+        nothing while the caller worked out that talking for longer was what
+        got through.
+
+        Counted as a comprehension failure like any other, because it is one,
+        and because two of them should already be stopping the cross-sell.
+        """
+        self._clarifies += 1
+        async for ev in self._generated(CLARIFY[self.lang]):
+            yield ev
 
     # ------------------------------------------------------- caller speaks
 
@@ -808,7 +952,7 @@ class CallSession:
 
         if asks_if_bot(text):
             async for ev in self._generated(BOT_DISCLOSURE[self.lang],
-                                            self._current_line()):
+                                            self._outstanding_question()):
                 yield ev
             return
 
@@ -819,13 +963,13 @@ class CallSession:
         # owns every reply, and "hmm" is one of the three tries it allows
         # before handing the change to a person — re-reading the premium
         # line over the top of it would be the wrong question entirely.
-        if is_nonverbal(text) and self._email_state is None:
+        if is_nonverbal(text):
             if self._unanswered:
                 self._pending, self._unanswered = self._unanswered, None
                 async for ev in self._generated(CLARIFY[self.lang]):
                     yield ev
                 return
-            line = self._current_line()
+            line = self._outstanding_question()
             if line.rstrip().endswith(("?", "？", "吗", "嗎")):
                 async for ev in self._generated(line):
                     yield ev
@@ -842,6 +986,17 @@ class CallSession:
             return
 
         if _looks_tamil(text):
+            # Once is a fragment; twice is a language. A caller who has been
+            # speaking English all call and produces one Tamil-looking line is
+            # far more likely to have been misheard than to have switched, and
+            # the cost of being wrong is a call ended in a transfer nobody
+            # asked for. So the first one asks again, in the language the call
+            # is already in, and only a second in a row hands over.
+            self._foreign += 1
+            if self._foreign < 2:
+                async for ev in self._generated(CLARIFY[self.lang]):
+                    yield ev
+                return
             yield SystemNote(text="Tamil detected · understanding available, "
                                   "speech output not built — handing to a colleague")
             async for ev in self._hand_off(
@@ -855,6 +1010,10 @@ class CallSession:
             async for ev in self._malay_escalation():
                 yield ev
             return
+        # Anything we could read resets the count: two Tamil-looking lines with
+        # an English one between them is a recogniser slipping, not a caller
+        # changing language.
+        self._foreign = 0
 
         # ---- reacting to the caller, before the script gets its turn ----
         # These run ahead of the identity gate on purpose: repeating the line
@@ -915,9 +1074,9 @@ class CallSession:
         # Nor for a request to *change* one: "can I change my email address?"
         # names the field, and answering with the field read the caller their
         # old address instead of opening the change they asked for.
-        if (not self._awaiting_identity and self._email_state is None
+        if (not self._awaiting_identity
                 and not is_advice_request(text) and not is_price_request(text)
-                and not wants_email_change(text)):
+                and wants_record_change(text) is None):
             found = policy_answer(text, self.p, self.lang)
             if found is not None:
                 answer, tool = found
@@ -944,7 +1103,7 @@ class CallSession:
         # that sub-dialogue's question, and repeating the scripted turn
         # instead is its own kind of not listening. `_handle_email` has its
         # own version of this.
-        if sounds_frustrated(text) and self._email_state is None:
+        if sounds_frustrated(text):
             self._frustrations += 1
             if self._frustrations >= 2:
                 async for ev in self._hand_off(
@@ -1014,16 +1173,9 @@ class CallSession:
         # reads as noise. The caller kept dictating after the bot had given up
         # on them, and each further piece of their address came back as "sorry,
         # I didn't quite catch that".
-        if self._email_state is not None:
-            async for ev in self._handle_email(text):
-                yield ev
-            return
-
-        if wants_email_change(text):
-            self._email_state = "listening"
-            self._email_attempts = 0
-            yield ToolCall(tool="crm.flag_email_change", arg=self.p.policy_id)
-            async for ev in self._generated(EMAIL_ASK[self.lang]):
+        change = wants_record_change(text)
+        if change:
+            async for ev in self._change_request(change, text):
                 yield ev
             return
 
@@ -1080,6 +1232,9 @@ class CallSession:
         # line); anywhere else, acknowledge and put the current line again.
         if self.turn >= 2 and not self._notice_missing and not_received(text):
             self._notice_missing = True
+            # They have answered turn 3's question, one turn early. Asking it
+            # anyway is the clearest way a call announces nobody is listening.
+            self._answered.add("notice")
             yield ToolCall(tool="crm.flag_notice_not_received", arg=self.p.policy_id)
             self._clarifies = 0
             if self.turn == 3:
@@ -1087,13 +1242,14 @@ class CallSession:
                     yield ev
                 return
             async for ev in self._generated(NOTICE_MISSING[self.lang],
-                                            self._current_line()):
+                                            self._outstanding_question()):
                 yield ev
             return
 
         # Turn 3 asked whether the renewal notice arrived; a "no" there is a
         # fact about this customer, not a refusal.
         if self.turn == 3 and denies(text):
+            self._answered.add("notice")
             # And it *answers the question*. Flagged but not answered, this
             # fell through to the model, which had no handler for it and
             # offered a customer care officer instead — telling a caller who
@@ -1180,7 +1336,8 @@ class CallSession:
         if nxt != 6:
             yield TurnChange(turn=nxt, state="active")
         text = script.render(nxt, self.p, self.lang, self.part_of_day,
-                             agent_name=self.agent_name, register=self.register)
+                             agent_name=self.agent_name, register=self.register,
+                             answered=frozenset(self._answered))
         # Turn 3 is the due date, turn 4 the premium. If the caller already
         # asked for one, reading it out cold sounds like nobody was listening.
         lead = self._bridge()
@@ -1220,8 +1377,6 @@ class CallSession:
 
     def _outstanding(self) -> str:
         """What a colleague picking this up still has to do."""
-        if self._email_state is not None:
-            return "email address change, not captured"
         if self.turn < 7:
             return f"renewal not confirmed (reached turn {self.turn} of 7)"
         return ""
@@ -1232,12 +1387,49 @@ class CallSession:
         """How the call has gone, for the one gate that should care."""
         return CallState(
             handing_off=self.handoff is not None,
-            unresolved=("an email change" if self._email_state is not None else ""),
+            unresolved="",
             awaiting_adviser=self._advice_raised,
             impatient=self._bridges_used and "impatient" in self._bridges_used,
             declined=self._declined_cross_sell,
             comprehension_failures=self._clarifies + self._frustrations,
         )
+
+    async def _change_request(self, kind: str, text: str) -> AsyncIterator[Event]:
+        """Any change to the customer's details or to their cover goes to a
+        person, and none of it is captured here.
+
+        The bot used to try. It asked for the new address, read back what it
+        thought it had heard, and on a recorded call turned "w y i a" into
+        yi@hotmail.com — then made it worse on the retry, because a caller
+        spelling something out more carefully is a caller the recogniser has
+        already failed once. A voice line is not a form.
+
+        Nothing is written to the record either way: what goes across is that a
+        change was asked for and what the caller said, so a colleague who can
+        verify them and type it correctly finishes the job.
+        """
+        policy = kind == "policy"
+        yield ToolCall(
+            tool="crm.flag_policy_change" if policy else "crm.flag_profile_change",
+            arg=self.p.policy_id)
+        summary = ("Policy change requested — routed to customer care" if policy
+                   else "Change to the details on file requested — routed to "
+                        "customer care")
+        outstanding = f"caller said: {text[:200]}"
+        # If they volunteered the address in the same breath, read it for the
+        # colleague. A suggestion, marked as one: the model gets these right
+        # far more often than not, and is confidently wrong often enough that
+        # nobody should type it in without checking. Never spoken, never
+        # written — it exists to save the colleague a minute.
+        if not policy and dictation.might_be_dictation(text):
+            heard = await dictation.email(self.backend, [text],
+                                          timeout_ms=self.guardrail_timeout_ms)
+            if heard.email:
+                outstanding += f" · unverified reading: {heard.email}"
+        async for ev in self._hand_off(
+                "policy_change" if policy else "data_change", summary,
+                outstanding=outstanding):
+            yield ev
 
     async def _hand_off(self, reason: ho.Reason, summary: str,
                         outstanding: str = "",
@@ -1300,7 +1492,20 @@ class CallSession:
         if self.turn == 6 and not self._cross_sell_ok:
             return CROSS_SELL_ASK[self.lang]
         return script.render(self.turn, self.p, self.lang, self.part_of_day,
-                             agent_name=self.agent_name, register=self.register)
+                             agent_name=self.agent_name, register=self.register,
+                             answered=frozenset(self._answered))
+
+    def _outstanding_question(self) -> str:
+        """The question the caller still owes us an answer to.
+
+        Different from `_current_line`, which is the whole turn. "Sorry, can
+        you repeat?" wants all of it; "what is this about?" wants the answer
+        and then the question — not the greeting and the introduction over
+        again. Re-speaking the whole turn is how a caller several turns into a
+        call gets greeted a second time, and asks what anyone would: "why you
+        keep repeating yourself?"
+        """
+        return script.question_of(self._current_line())
 
     async def _repeat(self, lead: str | None = None) -> AsyncIterator[Event]:
         """Say the current line again instead of pressing on.
@@ -1437,7 +1642,7 @@ class CallSession:
             return
         if got.label == "bot":
             async for ev in self._generated(BOT_DISCLOSURE[self.lang],
-                                            self._current_line()):
+                                            self._outstanding_question()):
                 yield ev
             return
         if got.label == "dnc":
@@ -1496,10 +1701,8 @@ class CallSession:
             self._advice_raised = True
             return
         if got.label == "email_change" and not self._awaiting_identity:
-            self._email_state = "listening"
-            self._email_attempts = 0
-            yield ToolCall(tool="crm.flag_email_change", arg=self.p.policy_id)
-            async for ev in self._generated(EMAIL_ASK[self.lang]):
+            async for ev in self._change_request(
+                    wants_record_change(text) or "data", text):
                 yield ev
             return
         if got.label == "coverage":
@@ -1560,7 +1763,7 @@ class CallSession:
         """
         self._purposes += 1
         why = (PURPOSE if self._purposes == 1 else PURPOSE_AGAIN)[self.lang]
-        line = self._current_line()
+        line = self._outstanding_question()
         full, buf, sr, ms = await self._voice(lead, why, line)
         yield Transcript(speaker="agent", text=full, lang=self.lang.upper(),
                          source=script.source_label(self.turn) + " · purpose",
@@ -1596,136 +1799,6 @@ class CallSession:
             yield ev
 
     # --------------------------------------------------- email correction
-
-    async def _handle_email(self, text: str) -> AsyncIterator[Event]:  # noqa: D401
-        """Take a corrected address, read it back, and only then store it.
-
-        Three attempts at an address, then a person. An address misheard by
-        one character means the renewal notice goes nowhere, which is worse
-        than an extra callback.
-
-        Only *attempts at an address* count against that budget. Asking again
-        for the thing we already agreed to do — "may I change my email
-        address?" — is not a failed attempt, and counting it burned two of the
-        caller's three tries before they had said a single letter.
-        """
-        if self._email_state == "confirming":
-            answer = yes_no(text)
-            settled = (answer is not None
-                       or wants_email_change(text, after_confirm=True))
-            if answer != "yes" and not settled and not self._confirm_reasked:
-                # Neither yes nor no. Throwing away an address the caller
-                # spelled correctly, because they answered the question with
-                # something else, makes them spell it all over again — so ask
-                # the question once more instead. Once: a caller who is not
-                # answering it twice is answering something else.
-                self._confirm_reasked = True
-                async for ev in self._generated(
-                        EMAIL_CONFIRM[self.lang].format(email=self._pending_email)):
-                    yield ev
-                return
-            self._confirm_reasked = False
-            if answer == "yes":
-                self.p.email = self._pending_email or self.p.email
-                yield ToolCall(tool="crm.update_email", arg=self.p.email)
-                self._email_state = None
-                self._pending_email = None
-                async for ev in self._generated(
-                        {"en": f"Updated — I'll send it to {self.p.email}.",
-                         "zh": f"已经更新了，我会发到 {self.p.email}。"}[self.lang]):
-                    yield ev
-                async for ev in self._advance():
-                    yield ev
-                return
-            self._email_state = "listening"       # heard it wrong, go again
-
-        # Repeating the request is not an attempt at the address.
-        if wants_email_change(text) and not still_dictating(text):
-            async for ev in self._generated(EMAIL_ASK[self.lang]):
-                yield ev
-            return
-
-        # Nor is telling us we are not listening. Apologise, and re-ask *this*
-        # question — repeating the premium line here, which is what the shared
-        # handler did, is its own kind of not listening.
-        if sounds_frustrated(text):
-            self._frustrations += 1
-            if self._frustrations >= 2:
-                self._email_state = None
-                async for ev in self._hand_off(
-                        "complaint", "Caller told us twice we were not "
-                                     "understanding them",
-                        outstanding=self._outstanding()):
-                    yield ev
-                return
-            self.rate = min(self.rate, SLOWER_STEPS[0])
-            async for ev in self._generated(APOLOGY[self.lang],
-                                            EMAIL_ASK[self.lang]):
-                yield ev
-            return
-
-        # Being told we should already know it is not an attempt at spelling,
-        # and must not cost the caller one of their three.
-        if defers_to_us(text):
-            async for ev in self._generated(
-                    EMAIL_ONLY_ONE[self.lang].format(email=self.p.email)):
-                yield ev
-            return
-
-        self._email_heard.append(text)
-        self._email_attempts += 1
-        candidate = spoken_email(text)
-        if (candidate is None and self.guardrail
-                and dictation.might_be_dictation(text)):
-            # The deterministic parser knows the shapes we have seen; the
-            # model handles the tail — "alias" for "@", an address spelled
-            # across three turns, a caller correcting themselves halfway. It
-            # gets everything said since we asked, and what it returns is
-            # still only a candidate: the caller hears it read back and says
-            # yes or no before it reaches the record.
-            got = await dictation.email(self.backend, self._email_heard,
-                                        timeout_ms=self.guardrail_timeout_ms)
-            if got.email:
-                yield SystemNote(
-                    text=f"Read the address out of the caller's spelling in "
-                         f"{got.latency_ms} ms", ok=True)
-                candidate = got.email
-        if candidate:
-            self._pending_email = candidate
-            self._email_state = "confirming"
-            async for ev in self._generated(
-                    EMAIL_CONFIRM[self.lang].format(email=candidate)):
-                yield ev
-            return
-
-        if self._email_attempts >= 3:
-            # The address is what the colleague has to finish, so it goes in
-            # the record. Carrying on with the script here — which is what
-            # this branch used to do — meant the cross-sell landed on someone
-            # we had just told we could not help.
-            # Every fragment, not just the last one. The caller spelled their
-            # address across three turns; handing the colleague only the tail
-            # of it makes them start from nothing, which is the whole thing
-            # this record exists to prevent.
-            heard = " / ".join(self._email_heard)
-            self._email_state = None
-            async for ev in self._hand_off(
-                    "data_change",
-                    "Email change could not be captured over the line",
-                    outstanding=("new email address" +
-                                 (f" — caller said: {heard[:200]}" if heard else ""))):
-                yield ev
-            return
-
-        # Ask for the part we are missing rather than the whole thing again.
-        # Making someone repeat a full address they have already said twice is
-        # how the second attempt fails the same way the first did.
-        again = (EMAIL_PARTIAL[self.lang] if still_dictating(text)
-                 else EMAIL_RETRY[self.lang])
-        async for ev in self._generated(again):
-            yield ev
-
-    # ------------------------------------------------------------ endings
 
     async def _wrong_party(self, note: str) -> AsyncIterator[Event]:
         self.gates.set("identity", "block", note)

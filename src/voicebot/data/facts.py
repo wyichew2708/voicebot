@@ -143,6 +143,59 @@ def wants_email_change(text: str, after_confirm: bool = False) -> bool:
                                "no lah", "not correct", "incorrect", "不对", "不是")
 
 
+#: Details we hold about the customer rather than about the cover.
+_PROFILE_WORDS = _EMAIL_WORDS + (
+    "address", "phone", "mobile", "handphone", "contact number", "postal",
+    "住址", "地址", "电话", "電話", "手机", "手機", "联络", "聯絡")
+
+#: The cover itself. Changing any of it is underwriting, not servicing.
+_POLICY_WORDS = ("sum insured", "coverage", "cover", "policy", "plan",
+                 "保额", "保額", "保单", "保單")
+
+#: Deliberately narrower than _CHANGE_WORDS, which includes "correct" and
+#: "fix". "The address is correct" is a customer confirming turn 2, not asking
+#: us to change anything, and routing that to customer care would end the call
+#: for a caller who was agreeing with us.
+_RECORD_CHANGE_WORDS = ("chang", "updat", "amend", "new", "differ", "switch",
+                        "wrong", "not my", "mov", "换", "改", "更新", "不对")
+
+#: Verbs that act on the cover without naming a change: "cancel my policy",
+#: "add my wife", "increase the sum insured".
+_POLICY_CHANGE_WORDS = _RECORD_CHANGE_WORDS + (
+    "increas", "decreas", "reduc", "rais", "lower", "add", "remov", "cancel",
+    "terminat", "upgrad", "downgrad", "增加", "减少", "減少", "取消", "退保")
+
+
+def wants_record_change(text: str) -> str | None:
+    """"data" for a detail we hold about the customer, "policy" for the cover
+    itself, None for anything else.
+
+    Both are customer-care work and neither is safe to take down over a voice
+    line. An address misheard by one character is a renewal notice that never
+    arrives; a cover change recorded wrong is a claim that does not pay. On a
+    recorded call the bot spent four turns trying to capture a dictated email
+    and wrote yi@hotmail.com for "w y i a" — which is why the bot's job here is
+    to route, and not to record.
+    """
+    low = text.lower()
+    # Advice outranks a change request, and the two overlap badly: "increase my
+    # cover" is in ADVICE_TRIGGERS and also reads as an instruction to change
+    # the cover. Whether to increase it is a licensed adviser's call under the
+    # Financial Advisers Act, so that path wins — the same order the handoff
+    # PRIORITY table already uses.
+    if is_advice_request(low):
+        return None
+    if wants_email_change(low):
+        return "data"
+    if (any(_stem(low, w) for w in _PROFILE_WORDS)
+            and any(_stem(low, c) for c in _RECORD_CHANGE_WORDS)):
+        return "data"
+    if (any(_stem(low, w) for w in _POLICY_WORDS)
+            and any(_stem(low, c) for c in _POLICY_CHANGE_WORDS)):
+        return "policy"
+    return None
+
+
 def spoken_email(text: str) -> str | None:
     """Best-effort recovery of a dictated address; None when unsure.
 

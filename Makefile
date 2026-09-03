@@ -107,3 +107,7 @@ clogs:                ## follow container logs
 
 console-only:         ## just the console, against services already running
 	docker compose up -d --build console
+
+name-audit:   ## render candidate spellings of a surname and build a page to listen to
+	$(PY) scripts/name_audit.py $(NAMES) $(if $(NAMES),,--from-personas)
+	@echo "open voices/audit/index.html"

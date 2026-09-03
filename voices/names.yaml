@@ -1,0 +1,51 @@
+# How a surname has to be spelled for the voice to say it correctly.
+#
+# The TTS has no pronunciation dictionary reachable from here — it is a
+# Chatterbox clone, so the inline IPA override that works on Kokoro is not
+# available — and its English letter-to-sound rules were not trained on
+# Singaporean romanisations. "Tan" comes out rhyming with "tang"; "Yeo" comes
+# out as "ye"; "Ng" comes out as the Korean "ing".
+#
+# These romanisations are Hokkien, Teochew and Cantonese, not Mandarin, so the
+# Mandarin front-end is not the answer either: 陈先生 is "Chen", and a customer
+# called Tan is not called Chen. Respelling the grapheme string the English
+# front-end sees is the only lever this stack leaves, and it is the one that
+# works — "Dan" renders as the /tan/ a Singaporean says.
+#
+#   say:  what to hand the synthesiser instead. Never shown to anyone.
+#   why:  what the unmodified spelling did wrong, so nobody "fixes" it back.
+#
+# `say: ~` means the voice cannot say this name acceptably however it is
+# spelled. The call falls back to "the policyholder" rather than mispronouncing
+# someone's name at the moment it asks them to trust the call.
+#
+# Build this with `make name-audit`: it renders every candidate, transcribes
+# each back as a filter, and writes a page to listen to. The recogniser
+# nominates; a person decides. Nothing goes in here that nobody has heard.
+version: 1
+names:
+  # Confirmed: the audit renders "Mister Dan" and it is the /tan/ a
+  # Singaporean says, which is what was asked for.
+  Tan:
+    say: "Dan"
+    why: "the plain spelling rhymes with 'tang'"
+
+  # Everything below is `say: ~` because no candidate the audit generated
+  # sounded right — not because the name is unsayable in principle. Omitting
+  # the name is the safe default while that is unresolved: a caller who is not
+  # addressed by name notices far less than one addressed by the wrong one, and
+  # turn 1 is asking them to confirm they are that person.
+  #
+  # To fix one: `make name-audit NAMES="Wong"`, add your own candidates to the
+  # carrier, listen, and put the winner in `say:`. One line each.
+  Ng:
+    say: ~
+    why: "Ng, Ung and Eng all render as 'eng'. Nothing produces a syllabic ng."
+  Wong:
+    say: ~
+    why: "Wong, Woung, Woeng and Wohng all render as 'wang'. Needs a candidate
+          the generator did not reach — pending a listen."
+  Yeo:
+    say: ~
+    why: "Yeo renders as 'yeh', Yeoh as 'ye', Yaw came back as katakana. Yeho
+          is the closest and is two syllables, which is wrong. Pending."

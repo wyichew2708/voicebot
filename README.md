@@ -389,6 +389,12 @@ languages, two registers, two voices.
 make prerender    # after changing script, personas, or a voice description
 ```
 
+A line the cache has never seen — a customer name that was not on the warm list, an answer assembled
+at call time — is synthesised in pieces and starts playing while the rest is still being made, so it
+does not cost its whole synthesis before a word is heard. It only splits a line when the measured
+synthesis rate can sustain it, because below that a split line gaps in the middle instead of merely
+starting late. See **[docs/streaming-synthesis.md](docs/streaming-synthesis.md)**.
+
 Add or edit voices under `backend.tts.prerender.voices` in the profile — they are prose
 descriptions, so age, pace and warmth all respond. `config/voice-presets.yaml` holds the other six
 from the palette if you want to swap one in.

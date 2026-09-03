@@ -27,7 +27,17 @@ MIN_RMS = 0.008               # quieter than this is room tone
 # At 0.35 only the loudest fifth of a real reply counted, so "yes, speaking"
 # read as 10% voiced and was thrown away as noise.
 VOICED_REL = 0.15
-MIN_VOICED_SECONDS = 0.18     # a real word, not a door slam
+# A real word, not a door slam. Measured against the *buffer's own peak*, so a
+# short sharp word loses frames a longer one keeps: a crisp "yes" has one loud
+# vowel and a fast decay, and most of it falls under 15% of that peak. At 0.18
+# the commonest answer on this script was thrown away — a recorded session
+# dropped five replies at 0.12, 0.14, 0.14, 0.16 and 0.16 s voiced, and the
+# caller repeated themselves and spoke longer until something got through.
+# Turns 2, 3, 4 and 6 all ask a yes/no question, so this is the answer the
+# gate has to let past. A door slam is one or two frames — the 0.04 s drop in
+# that same log still fails here — and the ratio, RMS and speech-rate checks
+# below are what actually keep noise out.
+MIN_VOICED_SECONDS = 0.10
 MIN_VOICED_RATIO = 0.12       # and not one syllable adrift in padding
 # The ratio above is right for a short buffer: "yes" inside half a second of
 # room is a real answer that happens to be mostly silence. It is far too
@@ -103,6 +113,35 @@ def _foreign_script(text: str) -> str | None:
     return None
 
 
+#: Frames of quiet this short do not end a word. A vowel dips below 15% of its
+#: own peak between syllables and across a stop consonant, and splitting the
+#: run there would measure "yes" as two fragments of nothing.
+VOICED_BRIDGE_FRAMES = 1
+
+
+def longest_voiced_run(flags: list[bool]) -> int:
+    """The longest contiguous stretch of voiced frames, bridging brief dips.
+
+    Total voiced duration cannot tell a word from keyboard noise: four clicks
+    of 30 ms with quarter-second gaps between them measure the same 0.12 s as
+    a short "yes", and one of them is an answer. A word is a single run; noise
+    is scattered. Judging the run rather than the total is what lets the floor
+    sit low enough to accept the commonest reply on this script without
+    admitting the clicks.
+    """
+    longest = run = gap = 0
+    for flag in flags:
+        if flag:
+            run += gap + 1
+            gap = 0
+        elif run and gap < VOICED_BRIDGE_FRAMES:
+            gap += 1                       # a dip, not the end of the word
+        else:
+            longest = max(longest, run)
+            run = gap = 0
+    return max(longest, run)
+
+
 def frame_energies(pcm: bytes, sample_rate: int, frame_ms: int = 20) -> list[float]:
     """RMS per frame, 0..1."""
     n = max(1, int(sample_rate * frame_ms / 1000))
@@ -131,9 +170,10 @@ def is_speech(pcm: bytes, sample_rate: int) -> tuple[bool, str]:
         return False, "no frames"
 
     peak = max(energies)
-    voiced = sum(1 for e in energies if e > max(MIN_RMS, peak * VOICED_REL))
+    flags = [e > max(MIN_RMS, peak * VOICED_REL) for e in energies]
+    voiced = sum(flags)
     ratio = voiced / len(energies)
-    voiced_seconds = voiced * 0.02
+    voiced_seconds = longest_voiced_run(flags) * 0.02
     overall = math.sqrt(sum(e * e for e in energies) / len(energies))
 
     if overall < MIN_RMS:
@@ -142,7 +182,7 @@ def is_speech(pcm: bytes, sample_rate: int) -> tuple[bool, str]:
     # loud frame however the rest of the buffer is padded. The ratio only
     # backs it up, and only because the caller's audio is trimmed first.
     if voiced_seconds < MIN_VOICED_SECONDS:
-        return False, f"only {voiced_seconds:.2f}s voiced"
+        return False, f"only {voiced_seconds:.2f}s voiced in a run"
     floor = (MIN_VOICED_RATIO_LONG if seconds >= LONG_BUFFER_SECONDS
              else MIN_VOICED_RATIO)
     if ratio < floor:

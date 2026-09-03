@@ -10,6 +10,7 @@ import struct
 
 import pytest
 
+from voicebot import audio_gate
 from voicebot.audio_gate import frame_energies, is_plausible, is_speech
 
 
@@ -334,3 +335,45 @@ def test_a_long_buffer_has_to_look_like_someone_talking():
     assert not ok and "mostly silence" in why
     ok, why = is_speech(buffer(3.0, 0.55), rate)
     assert ok, why                       # someone actually talking
+
+
+# --- the shortest real answer ---------------------------------------------
+# Reported: "i spoke yes but it didn't response and i have to keep repeating
+# and speak longer". The log had five drops in a row at 0.12-0.16 s voiced.
+
+def _short_word(voiced_s: float, total_s: float, sr: int = 16000, amp: float = 0.25) -> bytes:
+    import math
+    import struct
+    n_v, n_t = int(sr * voiced_s), int(sr * total_s)
+    out = [int((amp * math.sin(2 * math.pi * 140 * i / sr) if i < n_v else 0.0005) * 32767)
+           for i in range(n_t)]
+    return struct.pack(f"<{len(out)}h", *out)
+
+
+@pytest.mark.parametrize("voiced", [0.12, 0.14, 0.16])
+def test_a_short_yes_is_not_thrown_away(voiced):
+    """Turns 2, 3, 4 and 6 all ask a yes/no question, so this is the answer the
+    gate exists to let past. Measured against the buffer's own peak, a crisp
+    "yes" is one loud vowel and a fast decay — most of it falls under the
+    voiced threshold, and it measures far shorter than it sounds."""
+    ok, why = audio_gate.is_speech(_short_word(voiced, 0.6), 16000)
+    assert ok, why
+
+
+def test_a_door_slam_is_still_thrown_away():
+    """The floor came down; it did not come off. The same recorded session had
+    a 0.04 s drop that must stay dropped."""
+    ok, _ = audio_gate.is_speech(_short_word(0.04, 0.6), 16000)
+    assert not ok
+
+
+def test_the_browser_guard_is_looser_than_the_server_gate():
+    """The two count voiced frames differently, so matching the numbers looked
+    like agreement and was not: the browser passed the utterance, the server
+    dropped it, and the caller got silence. The server owns the decision."""
+    import pathlib
+    import re
+
+    html = pathlib.Path("ui/demo-console.html").read_text()
+    client_ms = int(re.search(r"var MIN_VOICED_MS = (\d+)", html).group(1))
+    assert client_ms < audio_gate.MIN_VOICED_SECONDS * 1000

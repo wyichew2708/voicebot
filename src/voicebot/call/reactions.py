@@ -148,18 +148,50 @@ _PURPOSE_PHRASES = (
     "what is this regarding", "what do you want", "what you want",
     "why are you calling", "why did you call", "what's the matter",
     "what is it about", "what can i do for you", "how can i help you",
-    "what happen", "what happened", "what's happening", "whats happening",
-    "what is happening", "what's going on", "whats going on", "what is going on",
+    "why is this", "why this call", "what is this call", "what's this call",
+    "may i know why", "may i know what", "can i know why", "mind telling me why",
     "有什么事", "有什麼事", "什么事", "什麼事", "找我什么事", "找我什麼事",
     "为什么打给我", "為什麼打給我", "什么事情", "什麼事情", "有事吗", "有事嗎",
     "什么保险", "什麼保險", "哪个保险", "哪個保險",       # "呃什么保险来的"
 )
 
 
+#: Purpose questions that are also ordinary English. "What happened" is the
+#: question when it opens the turn and something else entirely inside one:
+#: "yes, i am certain what happened" is a caller confirming who they are, and
+#: matched anywhere it was read as a question about the call — so the bot
+#: answered a question nobody asked and re-read the opening line, greeting and
+#: all, to a caller several turns in. They said "why you keep repeating
+#: yourself?", which is the right question.
+_PURPOSE_LEADING = (
+    "what happen", "what happened", "what's happening", "whats happening",
+    "what is happening", "what's going on", "whats going on", "what is going on",
+)
+
+#: Filler people open with. Stripped before deciding whether a phrase leads.
+_OPENERS = ("uh", "um", "erm", "ah", "eh", "oh", "so", "sorry", "hello", "hi",
+            "okay", "ok", "but", "and", "yeah", "well", "excuse me", "please")
+
+
+def _leads_with(low: str, phrase: str) -> bool:
+    """Whether the utterance opens with this phrase, past any filler."""
+    rest = low.lstrip(" ,.")
+    changed = True
+    while changed:
+        changed = False
+        for opener in _OPENERS:
+            if rest.startswith(opener) and rest[len(opener):len(opener) + 1] in ("", " ", ",", "."):
+                rest = rest[len(opener):].lstrip(" ,.")
+                changed = True
+    return rest.startswith(phrase)
+
+
 def asks_purpose(text: str) -> bool:
     """True when the caller wants to know why we are calling."""
     low = text.lower().strip()
-    return any(_has(low, p) for p in _PURPOSE_PHRASES)
+    if any(_has(low, p) for p in _PURPOSE_PHRASES):
+        return True
+    return any(_leads_with(low, p) for p in _PURPOSE_LEADING)
 
 
 def asks_who_we_are(text: str) -> bool:

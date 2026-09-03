@@ -26,11 +26,19 @@ def trim(pcm: bytes, head: bool = True, tail: bool = True,
         return pcm
     keep = int(sample_rate * keep_ms / 1000)
     start, end = 0, len(a)
+    # A clip with nothing above the floor anywhere is handed back untouched.
+    # Tested on each end separately: trimming only the tail of a silent clip
+    # used to leave `keep_ms` of it and throw the rest away, which turned the
+    # mock backend's silence — and any genuinely quiet line — into 20 ms.
     if head:
-        start = next((i for i, v in enumerate(a) if abs(v) > _FLOOR), len(a))
+        start = next((i for i, v in enumerate(a) if abs(v) > _FLOOR), None)
+        if start is None:
+            return pcm
         start = max(0, start - keep)
     if tail:
-        back = next((i for i, v in enumerate(reversed(a)) if abs(v) > _FLOOR), len(a))
+        back = next((i for i, v in enumerate(reversed(a)) if abs(v) > _FLOOR), None)
+        if back is None:
+            return pcm
         end = min(len(a), len(a) - back + keep)
     if start >= end:
         return pcm                      # all quiet: not ours to judge, hand it back

@@ -27,15 +27,16 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Literal
 
-Reason = Literal["advice", "data_change", "language", "not_understood",
-                 "off_topic", "pricing", "requested", "complaint"]
+Reason = Literal["advice", "data_change", "policy_change", "language",
+                 "not_understood", "off_topic", "pricing", "requested",
+                 "complaint"]
 
 #: Ranked by how badly the customer needs a person. When more than one applies
 #: — and they often do, because a frustrated caller is also a misheard one —
 #: the earliest wins, so the record names the cause rather than the symptom.
 PRIORITY: tuple[Reason, ...] = ("complaint", "requested", "advice", "pricing",
-                                "data_change", "language", "off_topic",
-                                "not_understood")
+                                "policy_change", "data_change", "language",
+                                "off_topic", "not_understood")
 
 
 @dataclass
@@ -67,9 +68,17 @@ WHY = {
         "zh": "这个问题需要由我们持牌的顾问来为您解答，我不方便回答。",
     },
     "data_change": {
-        "en": "I don't want to risk getting your email address wrong — if it's "
-              "off by one character the renewal notice won't reach you at all.",
-        "zh": "我不想弄错您的电邮地址。只要错一个字母，续保通知就寄不到您那里。",
+        "en": "Changing your details has to go through our customer care team "
+              "rather than me — if I take an address down wrong by a single "
+              "character, the renewal notice won't reach you at all.",
+        "zh": "更改您的资料需要由我们的客服团队处理。只要我记错一个字母，"
+              "续保通知就寄不到您那里。",
+    },
+    "policy_change": {
+        "en": "Changing the cover itself has to go through our customer care "
+              "team — that's not something I can do from a renewal call.",
+        "zh": "更改保单内容需要由我们的客服团队处理，"
+              "我在这通续保电话里没办法帮您更改。",
     },
     "pricing": {
         "en": "Pricing is set by our underwriting team rather than by me, so I "

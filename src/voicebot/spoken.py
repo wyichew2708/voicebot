@@ -312,6 +312,73 @@ def spoken_identifiers(text: str) -> str:
     return _PHONE.sub(lambda m: _digits(m.group()), text)
 
 
+# ----------------------------------------------------------------- names
+
+#: Salutations a surname can follow. Substitution is anchored to one of these
+#: so "Tan" only becomes "Dan" where it is a name: the word appears in
+#: ordinary text too, and a lexicon that rewrote all of it would be a bug that
+#: only ever showed up in audio.
+_SALUTATIONS = ("Mr", "Mrs", "Ms", "Mdm", "Dr")
+
+_NAMES_CACHE: "dict[str, dict] | None" = None
+
+
+def _names() -> "dict[str, dict]":
+    """The pronunciation lexicon, or an empty one.
+
+    Missing or malformed is not fatal: every name simply keeps its own
+    spelling, which is what happened before the file existed.
+    """
+    global _NAMES_CACHE
+    if _NAMES_CACHE is None:
+        try:
+            import yaml
+            from pathlib import Path
+            raw = yaml.safe_load(Path("voices/names.yaml").read_text()) or {}
+            _NAMES_CACHE = {str(k): (v or {}) for k, v in
+                            (raw.get("names") or {}).items()}
+        except Exception:
+            _NAMES_CACHE = {}
+    return _NAMES_CACHE
+
+
+def reload_names() -> None:
+    """Pick up an edited lexicon without a restart."""
+    global _NAMES_CACHE
+    _NAMES_CACHE = None
+
+
+def sayable(surname: str) -> bool:
+    """Whether the voice can say this name acceptably at all.
+
+    A name listed with no spelling is one no respelling fixed. Saying it
+    anyway mispronounces someone at the exact moment the call asks them to
+    trust it, so the script addresses them without it instead.
+    """
+    entry = _names().get((surname or "").strip())
+    return not (entry is not None and entry.get("say") is None)
+
+
+def spoken_names(text: str) -> str:
+    """Respell surnames so the synthesiser says them correctly.
+
+    Audio only. The transcript, the record and everything an operator reads
+    keep the customer's own spelling — this exists solely because the English
+    letter-to-sound rules in the voice were not trained on Hokkien, Teochew
+    and Cantonese romanisations, and "Tan" comes out rhyming with "tang".
+    """
+    names = _names()
+    if not names:
+        return text
+    for surname, entry in names.items():
+        say = entry.get("say")
+        if not say or say == surname:
+            continue
+        text = re.sub(rf"\b({'|'.join(_SALUTATIONS)})\.?\s+{re.escape(surname)}\b",
+                      rf"\1 {say}", text)
+    return text
+
+
 def segment_by_script(text: str, lang: str) -> list[tuple[str, str]]:
     """[(fragment, language)] for a line that mixes scripts.
 
@@ -323,7 +390,7 @@ def segment_by_script(text: str, lang: str) -> list[tuple[str, str]]:
     """
     if not text:
         return [(text, lang)]
-    text = spoken_address(text)
+    text = spoken_names(spoken_address(text))
     if lang == "en":
         return [(spoken_identifiers(text), lang)]
     out: list[tuple[str, str]] = []
@@ -361,4 +428,126 @@ def segment_by_script(text: str, lang: str) -> list[tuple[str, str]]:
             merged[-1] = (merged[-1][0] + frag, flang)
         else:
             merged.append((frag, flang))
+    return merged
+
+
+# --------------------------------------------------------------- chunking
+
+#: How much speech a second buys, measured off the pre-render voice: "Am I
+#: speaking with Mr Tan?" is six words in 1.9 s, and 请问是陈先生本人吗？ is
+#: ten characters in 2.3 s. Only ever used to decide where to cut, so being a
+#: little wrong costs a slightly early or late chunk boundary, nothing more.
+_WORDS_PER_SEC = 3.2
+_CHARS_PER_SEC = 4.3
+
+#: Sentence ends. Latin punctuation must be followed by whitespace, which is
+#: what keeps `a.tan@example.sg` and `1,234.56` in one piece without having to
+#: mask them first — an address has no space after its dots. CJK punctuation
+#: needs no such guard because nothing else uses those characters. The
+#: lookbehinds stop an abbreviation ending a sentence; "Mr. Tan" is the one
+#: that would otherwise strand a salutation on its own.
+_SENTENCE_END = re.compile(
+    r"(?<!\bMr)(?<!\bMrs)(?<!\bMs)(?<!\bMdm)(?<!\bDr)(?<!\bNo)(?<!\b[A-Z])"
+    r"(?<=[.!?;])\s+"
+    r"|(?<=[。！？；])")
+
+#: Clause ends, used only to find a shorter opening chunk inside a long first
+#: sentence. Commas are a worse place to breathe than a full stop, so they are
+#: a fallback and not a first choice.
+_CLAUSE_END = re.compile(r"(?<=[,;:])\s+|(?<=[，、：])")
+
+#: A chunk shorter than this is merged into its neighbour. Synthesis costs a
+#: fixed ~0.4 s whatever the length, so a half-second fragment is most of a
+#: second of work for almost no audio, and the voice audibly restarts on it.
+_MIN_CHUNK_SEC = 0.8
+
+
+def speech_seconds(text: str, lang: str) -> float:
+    """Roughly how long this text takes to say, in seconds."""
+    if lang == "zh":
+        han = sum(1 for c in text if "一" <= c <= "鿿")
+        if han:
+            # Latin runs inside a Mandarin line are read letter by letter and
+            # take much longer per character than Han does; count them as
+            # words so an email does not look like a handful of syllables.
+            words = len(re.findall(r"[A-Za-z0-9@._\-]+", text))
+            return han / _CHARS_PER_SEC + words / _WORDS_PER_SEC
+    return max(1, len(text.split())) / _WORDS_PER_SEC
+
+
+def _split_keep(pattern: "re.Pattern[str]", text: str) -> list[str]:
+    out, last = [], 0
+    for m in pattern.finditer(text):
+        piece = text[last:m.end()].strip()
+        if piece:
+            out.append(piece)
+        last = m.end()
+    tail = text[last:].strip()
+    if tail:
+        out.append(tail)
+    return out or ([text.strip()] if text.strip() else [])
+
+
+def speech_chunks(text: str, lang: str, first_seconds: float = 2.2,
+                  chunk_seconds: float = 3.5) -> list[str]:
+    """Break one utterance into pieces that can be synthesised in order.
+
+    The point is time-to-first-audio. Synthesis runs at roughly 0.8x real time
+    on this machine but returns nothing until it finishes, so a six-second
+    line is four seconds of silence before a word is heard. Cut the same line
+    into three and the first is heard in about a second, while the rest are
+    still being made — and because generation outruns playback, they arrive
+    before the player needs them.
+
+    So the first chunk is deliberately short and later ones are not: the
+    opening buys the latency, and longer chunks after it are both more
+    efficient per second of audio and better prosody. Splitting is at
+    sentence boundaries wherever possible, because that is where a listener
+    expects a breath, and every seam is a join the ear can hear.
+    """
+    text = (text or "").strip()
+    if not text:
+        return []
+    parts = _split_keep(_SENTENCE_END, text)
+
+    # A long opening sentence is the common case for turn 1, and leaving it
+    # whole would give back the latency this is here to save. Cut at a clause
+    # boundary instead, but only if that actually yields a shorter opener.
+    if parts and speech_seconds(parts[0], lang) > first_seconds * 1.6:
+        clauses = _split_keep(_CLAUSE_END, parts[0])
+        if len(clauses) > 1:
+            head, rest = clauses[0], ("" if lang == "zh" else " ").join(clauses[1:])
+            if speech_seconds(head, lang) >= _MIN_CHUNK_SEC:
+                parts = [head, rest] + parts[1:]
+
+    # Mandarin sentences butt up against each other; a space inserted at the
+    # join is a pause the writer did not ask for.
+    glue = "" if lang == "zh" else " "
+
+    chunks: list[str] = []
+    for part in parts:
+        # The budget belongs to the chunk being extended, not to the count of
+        # chunks so far: while chunks[-1] is still the opener it stays short.
+        budget = first_seconds if len(chunks) <= 1 else chunk_seconds
+        if chunks and speech_seconds(chunks[-1], lang) < budget:
+            joined = f"{chunks[-1]}{glue}{part}"
+            # No slack over the budget. A chunk allowed to overrun is one the
+            # chunk before it cannot pay for: the caller hears the opening,
+            # then a hole while the long tail is still being synthesised.
+            if speech_seconds(joined, lang) <= budget:
+                chunks[-1] = joined
+                continue
+        chunks.append(part)
+
+    # Fold away anything too short to be worth its own synthesis call. Done
+    # last so it catches both a stray fragment at the end and a one-word
+    # sentence in the middle.
+    merged: list[str] = []
+    for chunk in chunks:
+        if merged and speech_seconds(chunk, lang) < _MIN_CHUNK_SEC:
+            merged[-1] = f"{merged[-1]}{glue}{chunk}"
+        else:
+            merged.append(chunk)
+    while len(merged) > 1 and speech_seconds(merged[0], lang) < _MIN_CHUNK_SEC:
+        merged[:2] = [f"{merged[0]}{glue}{merged[1]}"]
     return merged

@@ -128,12 +128,18 @@ def test_acknowledgements_do_not_stack_on_consecutive_turns():
 
 
 def test_the_acknowledgement_and_the_line_arrive_as_one_clip():
-    """Two AgentAudio events would be two loads of the player, and the second
-    cuts the first off mid-word."""
+    """Two *utterances* would be two loads of the player, and the second cuts
+    the first off mid-word.
+
+    A line may now arrive as several audio events — that is how a chunk can be
+    heard while the rest is still being synthesised — so the thing to count is
+    the openings, not the events. One `start` per agent turn is the same
+    guarantee the player always needed.
+    """
     events, _ = _run(["uh, yes, anything?"])
-    audio = [e for e in events if e.kind == "audio"]
+    opens = [e for e in events if e.kind == "audio" and e.start]
     turns = [e for e in events if e.kind == "transcript" and e.speaker == "agent"]
-    assert len(audio) == len(turns), "an acknowledgement was sent as its own clip"
+    assert len(opens) == len(turns), "an acknowledgement was sent as its own clip"
 
 
 def test_the_join_does_not_leave_a_gap_where_the_line_sounds_dropped():
@@ -280,9 +286,9 @@ def test_a_greeting_that_also_confirms_identity_still_passes_the_gate():
 
 def test_the_greeting_reply_is_one_clip():
     events, _ = _run(["hello hello"])
-    audio = [e for e in events if e.kind == "audio"]
+    opens = [e for e in events if e.kind == "audio" and e.start]
     turns = [e for e in events if e.kind == "transcript" and e.speaker == "agent"]
-    assert len(audio) == len(turns)
+    assert len(opens) == len(turns)
 
 
 # --- questions about their own policy -------------------------------------
@@ -306,13 +312,16 @@ def test_a_question_wrapped_in_a_repeat_request_answers_the_question():
 @pytest.mark.parametrize("asked,expected", [
     ("how much is the premium?", "412 dollars"),
     ("when is it due?", "twenty twenty-six"),
-    ("which email do you have?", "wm.tan@example.sg"),
+    # None: whatever address is on the record. A literal here passed only
+    # because test_dictation had already mutated the shared persona, so the
+    # test failed the moment it was run on its own.
+    ("which email do you have?", None),
     ("what is my policy number?", "TH-4471-0093"),
     ("how much am i covered for?", "35,000"),
 ])
 def test_record_questions(asked, expected):
-    events, _ = _run(["Yes speaking", asked])
-    assert expected in _agent(events)[-1]
+    events, session = _run(["Yes speaking", asked])
+    assert (expected or session.p.email) in _agent(events)[-1]
 
 
 def test_the_due_date_answer_speaks_the_year_the_same_way_the_script_does():
@@ -530,9 +539,9 @@ def test_asking_who_we_are_before_the_identity_check_still_asks_the_question():
 
 def test_who_are_you_arrives_as_one_clip():
     events, _ = _run(["who is this?"])
-    audio = [e for e in events if e.kind == "audio"]
+    opens = [e for e in events if e.kind == "audio" and e.start]
     turns = [e for e in events if e.kind == "transcript" and e.speaker == "agent"]
-    assert len(audio) == len(turns)
+    assert len(opens) == len(turns)
 
 
 def test_asking_twice_does_not_repeat_the_same_paragraph():

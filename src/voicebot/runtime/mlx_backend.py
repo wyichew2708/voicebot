@@ -194,6 +194,18 @@ class MLXBackend(Backend):
 
     # --------------------------------------------------------------- tts
 
+    def cached(self, text: str, lang: str, voice: str | None = None) -> bool:
+        """Whether this exact line is already rendered to disk.
+
+        Lets the caller tell a piece that costs nothing from one that has to be
+        synthesised, which is the difference between a line that can be
+        streamed and one that would drop in the middle.
+        """
+        try:
+            return self.prerender.path(text, lang, voice).exists()
+        except Exception:                   # pragma: no cover - never fatal
+            return False
+
     async def speak(self, text: str, lang: str, prerendered: bool,
                     voice: str | None = None) -> Speech:
         """Audio for one agent turn, plus how long it took.

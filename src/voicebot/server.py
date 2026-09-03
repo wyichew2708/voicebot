@@ -432,6 +432,52 @@ async def preview(policy_id: str, lang: str = "en", turn: int = 1) -> JSONRespon
     })
 
 
+def _with_surname(policy, surname: str | None, salutation: str | None):
+    """The same record under a different name, for trying a pronunciation.
+
+    A copy, never a mutation: `personas.get` hands back the module-level
+    object, and editing it would follow the operator into every later call in
+    the process.
+    """
+    import dataclasses
+
+    surname = (surname or "").strip()
+    salutation = (salutation or "").strip() or policy.salutation
+    if not surname:
+        return policy
+    given = policy.name.rsplit(" ", 1)[0] if " " in policy.name else ""
+    return dataclasses.replace(
+        policy, surname=surname, salutation=salutation,
+        name=(f"{given} {surname}".strip() if given else surname))
+
+
+@app.get("/api/name")
+async def name_preview(surname: str, salutation: str = "Mr",
+                       lang: str = "en") -> JSONResponse:
+    """What the voice will actually be handed for this name.
+
+    The console shows this as the operator types, because the interesting part
+    is invisible otherwise: the transcript says "Mr Tan" whatever happens, and
+    only the synthesiser ever sees "Mr Dan".
+    """
+    from .call import script
+    from .spoken import reload_names, sayable, segment_by_script, spoken_names
+
+    reload_names()          # so an edit to voices/names.yaml shows up at once
+    surname = (surname or "").strip()
+    if not surname:
+        return JSONResponse({"error": "no surname"}, status_code=400)
+    policy = _with_surname(next(iter(personas.all_policies())), surname, salutation)
+    line = script.render(1, policy, lang)
+    return JSONResponse({
+        "surname": surname,
+        "sayable": sayable(surname),
+        "spoken_as": spoken_names(f"{policy.salutation} {surname}"),
+        "line": line,
+        "synthesised": "".join(frag for frag, _ in segment_by_script(line, lang)),
+    })
+
+
 @app.get("/api/personas")
 async def list_personas() -> JSONResponse:
     return JSONResponse([p.to_dict() for p in personas.all_policies()])
@@ -448,19 +494,27 @@ async def ws(sock: WebSocket) -> None:
 
     # Mic frames accumulate here until the client's VAD says the caller stopped.
     utterance = bytearray()
+    #: Consecutive buffers the gate refused. Reset by anything it accepts.
+    unheard = 0
 
     async def emit(ev) -> None:
         """Transcript, gate and turn events go out as JSON. Agent audio goes
         out as binary frames, bracketed so the client knows where one
         utterance ends and the next begins."""
         if isinstance(ev, AgentAudio):
-            _state["last_audio"] = ev.pcm     # served by /api/last-reply.wav
-            await sock.send_text(json.dumps(
-                {"kind": "audio_begin", "sample_rate": ev.sample_rate}))
+            # /api/last-reply.wav wants the whole utterance, not its last
+            # piece, so a streamed line accumulates rather than replaces.
+            if ev.start:
+                _state["last_audio"] = ev.pcm
+                await sock.send_text(json.dumps(
+                    {"kind": "audio_begin", "sample_rate": ev.sample_rate}))
+            else:
+                _state["last_audio"] = (_state.get("last_audio") or b"") + ev.pcm
             frame = int(ev.sample_rate * 0.02) * 2      # 20 ms of int16
             for i in range(0, len(ev.pcm), frame):
                 await sock.send_bytes(ev.pcm[i:i + frame])
-            await sock.send_text(json.dumps({"kind": "audio_end"}))
+            if ev.final:
+                await sock.send_text(json.dumps({"kind": "audio_end"}))
             return
         if ev.kind in INTERNAL_KINDS:
             return
@@ -492,7 +546,9 @@ async def ws(sock: WebSocket) -> None:
 
             if kind == "start":
                 RECORDER.finish(record)          # a previous call left hanging
-                policy = personas.get(data["policy_id"])
+                policy = _with_surname(personas.get(data["policy_id"]),
+                                       data.get("surname"),
+                                       data.get("salutation"))
                 register = data.get("register",
                                     _state["cfg"].get("register", "standard"))
                 voice = data.get("voice") or _default_voice()
@@ -543,7 +599,17 @@ async def ws(sock: WebSocket) -> None:
                     log.info("dropped non-speech: %s", why)
                     await sock.send_text(json.dumps(
                         {"kind": "status", "text": "Didn't catch that — go again"}))
+                    unheard += 1
+                    # The status line is for the operator. The caller cannot
+                    # see it — on a phone leg it does not exist at all — so
+                    # after a second refusal in a row the bot says so out loud
+                    # rather than leaving them talking into silence.
+                    if unheard >= 2 and session is not None:
+                        unheard = 0
+                        async for ev in session.unheard():
+                            await emit(ev)
                     continue
+                unheard = 0
 
                 result = await backend.transcribe(pcm, sample_rate)
 

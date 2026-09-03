@@ -6,12 +6,13 @@ and played from disk. Only customer questions run the full pipeline.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Literal
 
 from ..data.facts import CROSS_SELL, cross_sell_line
 from ..data.personas import Policy
-from ..spoken import _en_date, zh_date, zh_decimal, zh_number
+from ..spoken import _en_date, sayable, zh_date, zh_decimal, zh_number
 
 TurnKind = Literal["static", "template", "generated"]
 
@@ -26,12 +27,23 @@ class Turn:
     discloses_pii: bool = False
     # True when this turn is marketing rather than servicing.
     is_marketing: bool = False
+    #: What this turn asks the customer to confirm, if anything. When they have
+    #: already answered it earlier in the call, the turn is spoken without its
+    #: question and keeps everything else.
+    #:
+    #: Not the same as skipping the turn. Almost every turn here bundles a
+    #: disclosure with a question — turn 3 states the due date *and* asks about
+    #: the notice — so dropping the whole turn would silently drop a disclosure
+    #: the client requires. Only the question goes.
+    ask: str | None = None
 
 
 TURNS: tuple[Turn, ...] = (
     Turn(1, "Greeting + right-party check", "template"),
-    Turn(2, "Servicing purpose + property", "template", discloses_pii=True),
-    Turn(3, "Due date + renewal notice", "template", discloses_pii=True),
+    Turn(2, "Servicing purpose + property", "template", discloses_pii=True,
+         ask="property"),
+    Turn(3, "Due date + renewal notice", "template", discloses_pii=True,
+         ask="notice"),
     Turn(4, "Premium, sums insured, email", "template", discloses_pii=True),
     Turn(5, "Call to action", "static"),
     Turn(6, "Cross-sell — Tiq PA", "static", is_marketing=True),
@@ -62,6 +74,18 @@ def _zh_date(value: str) -> str:
 def _zh_address(p: Policy) -> str:
     """Chinese honorific follows the surname: 陈先生, not 陈先生女士."""
     return f"{p.surname}{_ZH_SALUTATION.get(p.salutation, '先生')}"
+
+
+def _named(p: Policy) -> bool:
+    """Whether this call may use the customer's name out loud.
+
+    Some surnames the voice cannot say however they are spelled — see
+    `voices/names.yaml`. Getting someone's name wrong in the opening sentence,
+    while asking them to confirm they are that person, is worse than not using
+    it: the whole turn is a trust test, and a mispronounced name fails it
+    before the question is even asked.
+    """
+    return sayable(p.surname)
 
 
 def _greeting(lang: str, part_of_day: str) -> str:
@@ -96,19 +120,32 @@ def agent_name_for(voice: str | None) -> str:
 
 
 def render(turn: int, p: Policy, lang: str, part_of_day: str = "afternoon",
-           agent_name: str = DEFAULT_AGENT, register: str = "standard") -> str:
+           agent_name: str = DEFAULT_AGENT, register: str = "standard",
+           answered: frozenset[str] = frozenset()) -> str:
     """Render one scripted turn. Slots come from the policy record; the wording
-    around them is fixed and never model-generated."""
+    around them is fixed and never model-generated.
+
+    `answered` names confirmations the customer has already given. A turn whose
+    question is in there is spoken without it: asking someone to confirm
+    something they told us one turn ago is the clearest way a call announces
+    that nobody is listening.
+    """
+    asked = TURNS[turn - 1].ask
+    done = asked is not None and asked in answered
     if lang == "en" and register == "singlish":
-        return _render_singlish(turn, p, part_of_day, agent_name)
+        return _render_singlish(turn, p, part_of_day, agent_name, done)
 
     g = _greeting(lang, part_of_day)
 
     if lang == "zh":
         return {
-            1: f"{g}，{_zh_address(p)}。我是 Etiqa 保险的{agent_name}。请问是{_zh_address(p)}本人吗？",
+            1: (f"{g}，{_zh_address(p)}。我是 Etiqa 保险的{agent_name}。请问是{_zh_address(p)}本人吗？"
+                if _named(p) else
+                f"{g}。我是 Etiqa 保险的{agent_name}。请问是保单持有人本人吗？"),
             2: f"我是来跟您确认您在{p.property_address}的居家保险续保事项。",
-            3: f"您的保单在{_zh_date(p.due_date)}到期。我想确认一下，您应该已经收到我们寄出的续保通知了吧？",
+            3: (f"您的保单在{_zh_date(p.due_date)}到期。"
+                if done else
+                f"您的保单在{_zh_date(p.due_date)}到期。我想确认一下，您应该已经收到我们寄出的续保通知了吧？"),
             4: (f"这次的保费是{zh_decimal(p.premium)}新币，{zh_number(p.term_years)}年配套，"
                 f"家庭财物保额{zh_decimal(p.contents_si)}元，"
                 f"装修保额{zh_decimal(p.reno_si)}元，"
@@ -120,11 +157,19 @@ def render(turn: int, p: Policy, lang: str, part_of_day: str = "afternoon",
         }[turn]
 
     return {
-        1: (f"{g} {p.salutation} {p.surname}. This is {agent_name} calling from "
-            f"Etiqa Insurance. Am I speaking with {p.salutation} {p.surname}?"),
+        1: ((f"{g} {p.salutation} {p.surname}. This is {agent_name} calling from "
+             f"Etiqa Insurance. Am I speaking with {p.salutation} {p.surname}?")
+            if _named(p) else
+            (f"{g}. This is {agent_name} calling from Etiqa Insurance. "
+             f"Am I speaking with the policyholder?")),
         2: (f"I'm doing a servicing call regarding your Tiq Home Insurance renewal "
+            f"for your property at {p.property_address}."
+            if done else
+            f"I'm doing a servicing call regarding your Tiq Home Insurance renewal "
             f"for your property at {p.property_address}?"),
-        3: (f"Your due date is {_en_date(p.due_date)}, and I assume you've received a renewal "
+        3: (f"Your due date is {_en_date(p.due_date)}."
+            if done else
+            f"Your due date is {_en_date(p.due_date)}, and I assume you've received a renewal "
             f"notice from Etiqa Insurance?"),
         4: (f"The final premium is {p.premium} dollars for a {p.term_years}-year plan, "
             f"with sum insured of Home Contents {p.contents_si} and Renovation {p.reno_si}. "
@@ -134,7 +179,8 @@ def render(turn: int, p: Policy, lang: str, part_of_day: str = "afternoon",
             "once payment is made."),
         6: f"Before I let you go — {cross_sell_line('en')}",
         7: (f"Feel free to note down any questions and we'll assist. Thank you for your "
-            f"time, {p.salutation} {p.surname}. Have a good day."),
+            f"time{f', {p.salutation} {p.surname}' if _named(p) else ''}. "
+            f"Have a good day."),
     }[turn]
 
 
@@ -146,14 +192,23 @@ def render(turn: int, p: Policy, lang: str, part_of_day: str = "afternoon",
 # COMPLIANCE: this is a rewording of the client's approved script. The facts,
 # figures and disclosures are identical and still come from the fact store, but
 # the phrasing itself needs Etiqa sign-off before it is used on a real call.
-def _render_singlish(turn: int, p: Policy, part_of_day: str, agent_name: str) -> str:
+def _render_singlish(turn: int, p: Policy, part_of_day: str, agent_name: str,
+                     done: bool = False) -> str:
     g = _greeting("en", part_of_day)
     return {
-        1: (f"{g} {p.salutation} {p.surname} ah. I'm {agent_name}, calling from "
-            f"Etiqa Insurance. Speaking to {p.salutation} {p.surname}, is it?"),
+        1: ((f"{g} {p.salutation} {p.surname} ah. I'm {agent_name}, calling from "
+             f"Etiqa Insurance. Speaking to {p.salutation} {p.surname}, is it?")
+            if _named(p) else
+            (f"{g} ah. I'm {agent_name}, calling from Etiqa Insurance. "
+             f"Speaking to the policyholder, is it?")),
         2: (f"I'm calling about your Tiq Home Insurance renewal, for your place at "
+            f"{p.property_address}."
+            if done else
+            f"I'm calling about your Tiq Home Insurance renewal, for your place at "
             f"{p.property_address}. Correct or not?"),
-        3: (f"Your due date is {_en_date(p.due_date)}. You got receive our renewal notice "
+        3: (f"Your due date is {_en_date(p.due_date)}."
+            if done else
+            f"Your due date is {_en_date(p.due_date)}. You got receive our renewal notice "
             f"already or not?"),
         4: (f"Okay so the premium is {p.premium} dollars, for the {p.term_years}-year "
             f"plan. Home contents {p.contents_si}, renovation {p.reno_si}. We already "
@@ -166,8 +221,9 @@ def _render_singlish(turn: int, p: Policy, part_of_day: str, agent_name: str) ->
             f"from {CROSS_SELL['from_price'].en}, so about "
             f"{CROSS_SELL['monthly'].en}. Got COVID-19 coverage, and "
             f"{CROSS_SELL['inpatient'].en}, dengue also covered."),
-        7: (f"Any questions just write down, we help you. Thank you ah "
-            f"{p.salutation} {p.surname}, you take care."),
+        7: (f"Any questions just write down, we help you. Thank you ah"
+            f"{f' {p.salutation} {p.surname}' if _named(p) else ''}, "
+            f"you take care."),
     }[turn]
 
 
@@ -193,6 +249,31 @@ def split_on_email(text: str) -> tuple[str, str] | None:
             if head and tail:
                 return head, tail
     return None
+
+
+#: Ends a sentence. Latin punctuation needs trailing whitespace so an address
+#: or a decimal is not a sentence boundary; CJK punctuation needs no guard.
+_SENTENCE = re.compile(r"(?<=[.!?])\s+|(?<=[。！？])")
+
+
+def question_of(line: str) -> str:
+    """The part of a line worth saying again, which is the question.
+
+    Re-asking used to repeat the whole turn. On turn 1 that meant greeting the
+    caller a second time — "Good afternoon Mr Tan. This is Michael calling from
+    Etiqa Insurance. Am I speaking with Mr Tan?" — several turns into the call,
+    and the caller said what anyone would: "why you keep repeating yourself?"
+
+    The preamble has already been heard. Only the question is outstanding, so
+    only the question comes back. A line that is not a question comes back
+    whole, because then there is nothing shorter to say.
+    """
+    line = (line or "").strip()
+    parts = [p for p in _SENTENCE.split(line) if p and p.strip()]
+    if len(parts) < 2:
+        return line
+    tail = parts[-1].strip()
+    return tail if tail.endswith(("?", "？", "吗？", "嗎？")) else line
 
 
 def source_label(turn: int) -> str:

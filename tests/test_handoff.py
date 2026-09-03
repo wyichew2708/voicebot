@@ -181,28 +181,23 @@ def test_a_clean_call_still_reaches_the_pitch():
 
 # --- the sub-dialogue keeps its own counters ------------------------------
 
-def test_asking_again_for_the_change_does_not_burn_an_attempt():
-    """Reported: "may I change my email address?" inside the sub-dialogue was
-    counted as a failed attempt at an address, so the caller had one try left
-    before they had said a single letter."""
-    events, session = _run(TO_TURN_4 + ["I changed my email address",
-                                        "may i change my email address?",
-                                        "i want to change my email address"])
-    assert session._email_attempts == 0
-    assert not _handoffs(events)
-    assert session._email_state == "listening"
+def test_asking_again_does_not_open_a_second_handoff():
+    """A caller who repeats themselves is a caller who has not been told
+    clearly enough. Repeating the request must not queue a second colleague."""
+    events, _ = _run(TO_TURN_4 + ["I changed my email address",
+                                  "may i change my email address?",
+                                  "i want to change my email address"])
+    assert len(_handoffs(events)) == 1
 
 
-def test_a_complaint_inside_the_email_dialogue_re_asks_the_email_question():
-    """It used to repeat the *premium* line, which is its own kind of not
-    listening."""
-    events, _ = _run(TO_TURN_4 + ["change my email", "a b c",
-                                  "uh, you didn't hear me."])
-    last = [e.text for e in events
-            if e.kind == "transcript" and e.speaker == "agent"][-1]
-    assert "my fault, not yours" in last
-    assert "email address you'd like us to use" in last
-    assert "final premium" not in last
+def test_a_change_request_never_repeats_the_premium_line():
+    """It used to answer a complaint mid-dialogue by reciting the premium,
+    which is its own kind of not listening. The dialogue is gone; the line it
+    must not fall back to is not."""
+    events, _ = _run(TO_TURN_4 + ["change my email", "uh, you didn't hear me."])
+    said = [e.text for e in events
+            if e.kind == "transcript" and e.speaker == "agent"]
+    assert "final premium" not in said[-1]
 
 
 def test_still_talking_is_not_an_answer_about_the_callback_number():
@@ -277,7 +272,11 @@ def test_answering_a_question_clears_the_not_understood_tally():
 def test_tamil_is_handed_to_someone_who_speaks_it():
     """One of Singapore's four official languages, and the recogniser handles
     it. We cannot speak it, so the only honest answer is a colleague who can."""
-    events, session = _run(["Yes speaking", "என்னி திச்காம் வணக்கம்"])
+    # Twice, because once is a fragment: a caller who has spoken English all
+    # call and produces one Tamil-looking line was far more likely misheard,
+    # and a handoff is not reversible.
+    events, session = _run(["Yes speaking", "என்னி திச்காம் வணக்கம்",
+                            "எனக்கு தமிழ் தெரியும்"])
     hs = _handoffs(events)
     assert hs and hs[0].reason == "language"
     assert "Tamil" in hs[0].summary
@@ -306,7 +305,8 @@ def test_saying_the_notice_never_arrived_is_heard():
 def test_the_language_handoff_names_the_language_we_actually_heard():
     """Hard-coded wording told a Tamil caller, in English, that we could not
     speak Malay."""
-    events, _ = _run(["Yes speaking", "என்னி திச்காம் வணக்கம்"])
+    events, _ = _run(["Yes speaking", "என்னி திச்காம் வணக்கம்",
+                      "எனக்கு தமிழ் தெரியும்"])
     said = _said(events)
     assert "in Tamil yet" in said and "Malay" not in said
 

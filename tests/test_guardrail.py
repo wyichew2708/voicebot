@@ -190,7 +190,7 @@ def test_it_only_runs_where_the_keyword_handlers_gave_up():
     ("procedure", "renew before the due date"),
     ("who_are_you", "calling from Etiqa Insurance"),
     ("advice", "licensed advisers"),
-    ("email_change", "email address you'd like us to use"),
+    ("email_change", "customer care"),
 ])
 def test_a_label_reaches_the_handler_that_already_exists(label, expected):
     events, _ = _run(TO_TURN_4 + ["mmm zzz"], backend=_Router(label))
