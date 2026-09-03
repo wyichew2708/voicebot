@@ -37,3 +37,43 @@ def test_both_offer_the_same_languages(profiles):
     mac, rhel = profiles
     assert mac["languages"] == rhel["languages"]
     assert mac["audio"]["sample_rate"] == rhel["audio"]["sample_rate"]
+
+
+# --- the two backends have to offer the call the same choices --------------
+
+def test_both_backends_expose_the_same_capabilities():
+    """A method on one backend and not the other is a call that behaves
+    differently on the GPU box for reasons nobody wrote down.
+
+    `cached` is the example this test was added for: the streaming budget asks
+    it whether a chunk is free, and a backend that cannot answer is read as
+    "nothing is cached", so the RHEL box quietly declined to split lines the
+    Mac would have split.
+    """
+    import inspect
+
+    from voicebot.runtime.cuda_backend import CUDABackend
+    from voicebot.runtime.mlx_backend import MLXBackend
+
+    def public(cls):
+        return {n for n, _ in inspect.getmembers(cls, callable)
+                if not n.startswith("_")}
+
+    mlx, cuda = public(MLXBackend), public(CUDABackend)
+    # `load` is Apple-only on purpose: the CUDA backend talks to services that
+    # are already up, so it has nothing to load.
+    assert mlx - cuda == {"load"}, f"only on MLX: {sorted(mlx - cuda - {'load'})}"
+    assert not cuda - mlx, f"only on CUDA: {sorted(cuda - mlx)}"
+
+
+def test_the_cache_question_is_answered_the_same_way():
+    """Both read the same PrerenderCache, so a line is a hit on both boxes or
+    neither. Divergence here is a voice change mid-call on one of them."""
+    import inspect
+
+    from voicebot.runtime.cuda_backend import CUDABackend
+    from voicebot.runtime.mlx_backend import MLXBackend
+
+    for cls in (MLXBackend, CUDABackend):
+        src = inspect.getsource(cls.cached)
+        assert "self.prerender.path(text, lang, voice).exists()" in src, cls.__name__

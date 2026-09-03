@@ -153,3 +153,24 @@ def test_an_edited_lexicon_shows_up_without_a_restart():
                      params={"surname": "Tan"}).json()["spoken_as"] == "Mr Dan"
     finally:
         sp._NAMES_CACHE = saved
+
+
+def test_the_lexicon_is_found_from_any_working_directory():
+    """A relative path resolves against wherever the process was started — a
+    systemd unit with no WorkingDirectory, a container entered at /, a test run
+    from elsewhere. The failure is silent: a lexicon that cannot be read looks
+    exactly like an empty one, and every name quietly keeps its own spelling
+    on the box where it matters most."""
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    out = subprocess.run(
+        [sys.executable, "-c",
+         "import sys; sys.path.insert(0, %r);"
+         "from voicebot.spoken import spoken_names;"
+         "print(spoken_names('Mr Tan'))" % str(root / "src")],
+        cwd=os.sep, capture_output=True, text=True, timeout=60)
+    assert out.stdout.strip() == "Mr Dan", out.stderr[-400:]

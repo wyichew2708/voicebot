@@ -6,6 +6,7 @@ an answer has to sound the same as the same date read out in a scripted line.
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 _MONTHS = ("january", "february", "march", "april", "may", "june", "july",
            "august", "september", "october", "november", "december")
@@ -320,6 +321,15 @@ def spoken_identifiers(text: str) -> str:
 #: only ever showed up in audio.
 _SALUTATIONS = ("Mr", "Mrs", "Ms", "Mdm", "Dr")
 
+#: Anchored to the package, not to the working directory. Located the same way
+#: config.py and server.py locate theirs, and for the same reason: a relative
+#: path resolves against wherever the process happens to have been started —
+#: a systemd unit with no WorkingDirectory, a container entered at /, a test
+#: run from elsewhere. The failure is silent, because a lexicon that cannot be
+#: read is indistinguishable from an empty one and every name simply keeps its
+#: own spelling.
+_NAMES_PATH = Path(__file__).resolve().parents[2] / "voices" / "names.yaml"
+
 _NAMES_CACHE: "dict[str, dict] | None" = None
 
 
@@ -333,8 +343,7 @@ def _names() -> "dict[str, dict]":
     if _NAMES_CACHE is None:
         try:
             import yaml
-            from pathlib import Path
-            raw = yaml.safe_load(Path("voices/names.yaml").read_text()) or {}
+            raw = yaml.safe_load(_NAMES_PATH.read_text()) or {}
             _NAMES_CACHE = {str(k): (v or {}) for k, v in
                             (raw.get("names") or {}).items()}
         except Exception:

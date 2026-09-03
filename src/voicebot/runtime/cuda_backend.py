@@ -131,6 +131,19 @@ class CUDABackend(Backend):
 
     # ----------------------------------------------------------------- tts
 
+    def cached(self, text: str, lang: str, voice: str | None = None) -> bool:
+        """Whether this exact line is already rendered to disk.
+
+        Same cache and same keys as the Mac — the two profiles are checked
+        against each other precisely so a line rendered on one is a hit on the
+        other. It matters more here: a miss on this box does not render, it
+        drops to the live voice, which is a different speaker mid-call.
+        """
+        try:
+            return self.prerender.path(text, lang, voice).exists()
+        except Exception:                   # pragma: no cover - never fatal
+            return False
+
     async def speak(self, text: str, lang: str, prerendered: bool,
                     voice: str | None = None) -> Speech:
         t0 = time.perf_counter()
