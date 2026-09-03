@@ -428,7 +428,7 @@ def defers_to_us(text: str) -> bool:
 
 
 # "Are you a robot?" On an outbound insurance call the only acceptable answer
-# is yes. The bot was routing it to "who are you" and replying "I'm Dave from
+# is yes. The bot was routing it to "who are you" and replying "I'm calling from
 # Etiqa" — a true sentence that answers a different question, which is the
 # textbook shape of a dodge. Asked twice on one recorded call.
 _BOT_PHRASES = (

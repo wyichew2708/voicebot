@@ -37,13 +37,18 @@ def plan(langs: list[str], registers: list[str],
             jobs.append((text, lang, voice))
 
     for voice in voices or [None]:
+        # The opening turn and the identity lines name the agent, and the name
+        # follows the voice. Rendering them under one name for every voice was
+        # the bug this parameter exists to prevent.
+        agent = script.agent_name_for(voice)
         for policy in personas.all_policies():
             for lang in langs:
                 for register in registers:
                     if lang != "en" and register == "singlish":
                         continue             # Singlish register is English-only
                     for turn in range(1, 8):
-                        text = script.render(turn, policy, lang, register=register)
+                        text = script.render(turn, policy, lang,
+                                             agent_name=agent, register=register)
                         add(text, lang, voice)
                         # Turn 4 is also warmed split, because the email slot
                         # can change mid-call and only the tail should have to
@@ -53,7 +58,7 @@ def plan(langs: list[str], registers: list[str],
                                 add(part, lang, voice)
         # Acknowledgements and repeat lead-ins are spoken from the cache too;
         # a miss would synthesise mid-turn, in front of the line it introduces.
-        for text, lang in prerenderable_lines():
+        for text, lang in prerenderable_lines(agent):
             if lang in langs:
                 add(text, lang, voice)
         # Coverage answers from the knowledge bundle. These were never warmed

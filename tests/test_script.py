@@ -214,10 +214,18 @@ def test_the_property_address_is_english_on_a_mandarin_call():
 def test_a_mandarin_turn_is_mandarin_apart_from_names_and_the_email(turn):
     from voicebot.spoken import segment_by_script
 
-    from voicebot.spoken import spoken_address
+    from voicebot.spoken import spoken_address, spoken_identifiers
+    from voicebot.call.script import AGENT_NAMES
+
+    # Everything a Mandarin turn is allowed to say in English, and nothing
+    # else. The agent's name is on the list because it is an English name:
+    # read by the Chinese front-end, "Michelle" is not the word anyone says.
+    # Derived from the data rather than typed out, so a renamed persona
+    # updates the list and a genuinely new English fragment still fails.
     allowed = {"Etiqa", "Tiq Home", "Tiq Personal Accident",
                spoken_address(P.property_address),
-               "w m dot tan at example dot s g"}
+               spoken_identifiers(P.email)}
+    allowed |= set(AGENT_NAMES.values())
     text = render(turn, P, "zh")
     for fragment, lang in segment_by_script(text, "zh"):
         if lang == "en":
@@ -362,7 +370,8 @@ def test_no_mandarin_line_says_the_product_name_alone():
     from voicebot.call import engine
 
     lines = [render(t, P, "zh") for t in range(1, 8)]
-    lines += [engine.WHO_WE_ARE["zh"], engine.WHO_WE_ARE_AGAIN["zh"],
+    lines += [engine.who_we_are("zh", "Michelle"),
+              engine.who_we_are_again("zh", "Michelle"),
               engine.PURPOSE["zh"], engine.PURPOSE_AGAIN["zh"]]
     for line in lines:
         for run in re.findall(r"[A-Za-z][A-Za-z ]*", line):

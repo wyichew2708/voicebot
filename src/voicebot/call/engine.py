@@ -180,13 +180,15 @@ APOLOGY = {
     "zh": "您说得对，不好意思，是我的问题。",
 }
 
-WHO_WE_ARE = {
-    "en": ("Of course — my name is Dave and I'm calling from Etiqa Insurance, "
-           "about your Tiq Home Insurance policy. You can reach us on 6887 8777 "
-           "if you'd rather call back."),
-    "zh": ("当然可以。我叫 Dave，是 Etiqa 保险的，关于您的 Tiq Home 保险保单。"
-           "如果您想回电确认，我们的号码是 6887 8777。"),
-}
+def who_we_are(lang: str, agent: str) -> str:
+    """Who is calling. Carries the agent's name, so it varies with the voice
+    and has to be rendered per voice like the opening turn does."""
+    if lang == "zh":
+        return (f"当然可以。我叫 {agent}，是 Etiqa 保险的，关于您的 Tiq Home 保险保单。"
+                "如果您想回电确认，我们的号码是 6887 8777。")
+    return (f"Of course — my name is {agent} and I'm calling from Etiqa Insurance, "
+            "about your Tiq Home Insurance policy. You can reach us on 6887 8777 "
+            "if you'd rather call back.")
 
 # What the call is about, as distinct from who is making it. Followed
 # immediately by the line we were on, so the caller gets the question they
@@ -204,10 +206,10 @@ PURPOSE_AGAIN = {
     "zh": "就是续保的事，没别的。",
 }
 
-WHO_WE_ARE_AGAIN = {
-    "en": "It's still Dave, from Etiqa Insurance.",
-    "zh": "还是我，Etiqa 保险的 Dave。",
-}
+def who_we_are_again(lang: str, agent: str) -> str:
+    if lang == "zh":
+        return f"还是我，Etiqa 保险的 {agent}。"
+    return f"It's still {agent}, from Etiqa Insurance."
 
 ADVISER_BOOKED = {
     "en": "Thank you — I'll have one of our advisers call you back.",
@@ -244,7 +246,7 @@ GREETING_REPLY = {
 # alternative — "sorry, I didn't quite catch that", over and over — pretends
 # the problem is the line rather than the scope.
 #: "Are you a robot?" On an outbound insurance call the only acceptable
-#: answer is yes. Routed to "who are you" it produced "I'm Dave from Etiqa" —
+#: answer is yes. Routed to "who are you" it introduced itself instead —
 #: a true sentence answering a different question, asked twice on one call.
 #: Disclosed, then the line they were on, so the call does not stall on it.
 BOT_DISCLOSURE = {
@@ -336,7 +338,7 @@ def _join_case(lead: str, text: str) -> str:
     return text[0].lower() + text[1:] if first in _LOWERABLE else text
 
 
-def prerenderable_lines() -> list[tuple[str, str]]:
+def prerenderable_lines(agent_name: str = script.DEFAULT_AGENT) -> list[tuple[str, str]]:
     """(text, lang) for every fixed line the engine speaks with prerendered=True.
 
     Acknowledgements and repeat lead-ins are short, so synthesising one live
@@ -350,7 +352,7 @@ def prerenderable_lines() -> list[tuple[str, str]]:
                   LANG_BRIDGE, REPEAT_HANDOFF, CALLBACK_REPLY, EMAIL_RETRY,
                   SLOWER_ACK, SLOWEST_ACK, CLARIFY, GREETING_REPLY,
                   ADVISER_BOOKED, ADVISER_DECLINED, ALREADY_SAID,
-                  RENEWAL_PROCESS, WHO_WE_ARE, WHO_WE_ARE_AGAIN, PURPOSE,
+                  RENEWAL_PROCESS, PURPOSE,
                   PURPOSE_AGAIN,
                   CROSS_SELL_ASK, CROSS_SELL_WHAT, BOT_DISCLOSURE, DNC_ACK,
                   COVERAGE_UNKNOWN, THINKING,
@@ -359,6 +361,13 @@ def prerenderable_lines() -> list[tuple[str, str]]:
         out.extend((text, lang) for lang, text in table.items())
     out.extend(ho.all_lines())
     out.append((MALAY_ESCALATION, "en"))
+    # Carry the agent's name, so they belong to one voice rather than to the
+    # script. Warming them under the wrong name is a cache miss mid-turn, in
+    # front of the question "who is this?" -- the worst possible place for a
+    # two-second pause.
+    for lang in ("en", "zh"):
+        out.append((who_we_are(lang, agent_name), lang))
+        out.append((who_we_are_again(lang, agent_name), lang))
     # Both registers of every improvised line. Warming only the Singlish
     # rewordings left the standard forms to render live: the identity re-ask
     # cost 7.6 s mid-call the first time it was needed.
@@ -417,6 +426,9 @@ class CallSession:
         # call: swapping speaker mid-conversation is as jarring as swapping
         # language.
         self.voice = voice
+        # The name the bot gives, matched to the voice speaking. Fixed for the
+        # call, like the voice itself.
+        self.agent_name = script.agent_name_for(voice)
         # How this deployment may use the knowledge bundle. The demo speaks
         # unsourced placeholder wording; anything heading for a real customer
         # refuses it and offers a colleague instead. Resolved once per call so
@@ -482,7 +494,7 @@ class CallSession:
         return Transcript(
             speaker="agent",
             text=script.render(turn, self.p, self.lang, self.part_of_day,
-                               register=self.register),
+                               agent_name=self.agent_name, register=self.register),
             lang=self.lang.upper(),
             source=script.source_label(turn),
             latency_ms=latency_ms,
@@ -608,7 +620,7 @@ class CallSession:
         # The opening line needs audio like every other turn — without this the
         # bot answers the phone in silence.
         text = script.render(1, self.p, self.lang, self.part_of_day,
-                             register=self.register)
+                             agent_name=self.agent_name, register=self.register)
         _, buf, sr, ms = await self._voice(text)
         yield self._say(1, latency_ms=ms)
         yield AgentAudio(pcm=buf, sample_rate=sr)
@@ -877,18 +889,18 @@ class CallSession:
             if self._identified > 1:
                 # The same paragraph twice is what makes a bot a bot. Say who
                 # we are in a sentence, then get on with the call.
-                async for ev in self._say_purpose(WHO_WE_ARE_AGAIN[self.lang]):
+                async for ev in self._say_purpose(who_we_are_again(self.lang, self.agent_name)):
                     yield ev
                 return
             if self._awaiting_identity:
                 # One clip. Two AgentAudio events would be two loads of the
                 # player, and the second cuts the first off mid-word.
                 async for ev in self._generated(
-                        WHO_WE_ARE[self.lang],
+                        who_we_are(self.lang, self.agent_name),
                         "Sorry, just to confirm — am I speaking with the policyholder?"):
                     yield ev
             else:
-                async for ev in self._generated(WHO_WE_ARE[self.lang]):
+                async for ev in self._generated(who_we_are(self.lang, self.agent_name)):
                     yield ev
             return
 
@@ -1168,7 +1180,7 @@ class CallSession:
         if nxt != 6:
             yield TurnChange(turn=nxt, state="active")
         text = script.render(nxt, self.p, self.lang, self.part_of_day,
-                             register=self.register)
+                             agent_name=self.agent_name, register=self.register)
         # Turn 3 is the due date, turn 4 the premium. If the caller already
         # asked for one, reading it out cold sounds like nobody was listening.
         lead = self._bridge()
@@ -1288,7 +1300,7 @@ class CallSession:
         if self.turn == 6 and not self._cross_sell_ok:
             return CROSS_SELL_ASK[self.lang]
         return script.render(self.turn, self.p, self.lang, self.part_of_day,
-                             register=self.register)
+                             agent_name=self.agent_name, register=self.register)
 
     async def _repeat(self, lead: str | None = None) -> AsyncIterator[Event]:
         """Say the current line again instead of pressing on.
@@ -1453,10 +1465,10 @@ class CallSession:
         if got.label == "who_are_you":
             self._identified += 1
             if self._identified > 1:
-                async for ev in self._say_purpose(WHO_WE_ARE_AGAIN[self.lang]):
+                async for ev in self._say_purpose(who_we_are_again(self.lang, self.agent_name)):
                     yield ev
             else:
-                async for ev in self._generated(WHO_WE_ARE[self.lang]):
+                async for ev in self._generated(who_we_are(self.lang, self.agent_name)):
                     yield ev
             return
         if got.label == "purpose":

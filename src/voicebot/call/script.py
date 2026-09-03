@@ -71,8 +71,32 @@ def _greeting(lang: str, part_of_day: str) -> str:
             "evening": "Good evening"}[part_of_day]
 
 
+#: The name the bot gives when it introduces itself, chosen to match the voice
+#: speaking. A voice that presents as a woman introducing itself as Michael is
+#: the kind of detail a caller cannot name but does notice, and it invites the
+#: "are you a robot" question three turns early.
+#:
+#: The name is part of the line, and the line is pre-rendered per voice, so
+#: adding a voice here means re-rendering that voice's opening turns. Custom
+#: voices an admin records fall back to DEFAULT_AGENT until they are listed.
+AGENT_NAMES = {
+    "male": "Michael",
+    "michael": "Michael",
+    "eric": "Michael",
+    "female": "Michelle",
+    "isabella": "Michelle",
+    "bella": "Michelle",
+    "sarah": "Michelle",
+}
+DEFAULT_AGENT = "Michael"
+
+
+def agent_name_for(voice: str | None) -> str:
+    return AGENT_NAMES.get(voice or "", DEFAULT_AGENT)
+
+
 def render(turn: int, p: Policy, lang: str, part_of_day: str = "afternoon",
-           agent_name: str = "Dave", register: str = "standard") -> str:
+           agent_name: str = DEFAULT_AGENT, register: str = "standard") -> str:
     """Render one scripted turn. Slots come from the policy record; the wording
     around them is fixed and never model-generated."""
     if lang == "en" and register == "singlish":

@@ -52,13 +52,14 @@ def _agent(events):
     ("zh", "我在问你是不是机器人", "自动语音助理"),
 ])
 def test_asked_if_it_is_a_machine_the_bot_says_yes(lang, said, marker):
-    """Routed to "who are you" it answered "I'm Dave from Etiqa" — true, and
-    a dodge. Asked twice on one recorded call."""
+    """Routed to "who are you" it answered with the agent's name and employer
+    — true, and a dodge. Asked twice on one recorded call."""
     s = _session(lang)
     _say(s, "yes speaking" if lang == "en" else "是的")
     out = _agent(_say(s, said))
     assert marker in out
-    assert "Dave" not in out.split(marker)[0], "introduced itself instead of answering"
+    assert s.agent_name not in out.split(marker)[0], \
+        "introduced itself instead of answering"
 
 
 def test_disclosure_does_not_stall_the_call():

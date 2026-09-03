@@ -513,7 +513,7 @@ def test_what_is_this_about_is_a_different_question(said):
 def test_the_bot_says_who_it_is_when_asked():
     events, session = _run(["Yes speaking", "sorry, who are you?"])
     said = _agent(events)[-1]
-    assert "Dave" in said and "Etiqa Insurance" in said
+    assert session.agent_name in said and "Etiqa Insurance" in said
     assert "6887 8777" in said, "no way to call back and check"
     assert session.turn == 2, "answering the question is not finishing a turn"
 
@@ -542,7 +542,7 @@ def test_asking_twice_does_not_repeat_the_same_paragraph():
                       "uh, i, i asking who are you?"])
     said = _agent(events)
     assert "6887 8777" in said[-2], "the first ask gets the full identification"
-    assert "It's still Dave" in said[-1]
+    assert "It's still Michael" in said[-1], "the default voice is Michael"
     assert "Tiq Home Insurance renewal" in said[-1], "never said why we called"
 
 
