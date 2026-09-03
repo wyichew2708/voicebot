@@ -22,9 +22,24 @@ A handoff is a state the call enters. This is what entering it does.
 | Caller asks for a person | `requested` | `reactions.asks_for_human` |
 | Caller says twice that we are not understanding them | `complaint` | `reactions.sounds_frustrated` |
 | Advice under the Financial Advisers Act | `advice` | `compliance.gates.check_advice` |
-| A data change we cannot capture safely (3 tries) | `data_change` | `engine._handle_email` |
+| Any change to the details we hold | `data_change` | `facts.wants_record_change` -> `engine._change_request` |
+| Any change to the cover itself | `policy_change` | `facts.wants_record_change` -> `engine._change_request` |
+| Caller asks for a lower premium | `pricing` | `facts.is_price_request` |
+| Caller raises something off this call | `off_topic` | the guardrail, then `_pending = "officer"` |
 | Malay — understood, not spoken | `language` | `engine._looks_malay` |
+| Tamil — understood, not spoken (two turns running) | `language` | `engine._looks_tamil` |
 | Three replies running we could not make out | `not_understood` | `engine._clarify`, `_repeat` |
+
+**The bot no longer attempts a change before handing it over.** It used to: it
+asked for the new address, read back what it thought it had heard, and on a
+recorded call turned "w y i a" into `yi@hotmail.com` — then made it worse on
+the retry, because a caller spelling something out more carefully is a caller
+the recogniser has already failed once. A voice line is not a form. Nothing is
+written to the record either way; what goes across is that a change was asked
+for and the caller's own words, so a colleague who can verify them finishes
+the job. Where the model can read a dictated address it is attached to the
+handoff as an **unverified suggestion**, marked as one, to save the colleague
+a minute — never spoken, never written.
 
 `requested` and `complaint` outrank everything else: a caller who has asked for
 a person does not need a fourth attempt at the script first. `handoff.PRIORITY`

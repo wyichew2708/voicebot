@@ -205,3 +205,97 @@ the script prints `setsebool -P container_use_devices 1` when it catches it.
 **Still unverified:** no NVIDIA hardware was available. The backend is tested against a stub of all
 three services — request shapes, cache short-circuit, readiness including the wrong-model case — so
 everything but the GPU is covered. Budget the two days §04 predicted for the first real bring-up.
+
+---
+
+## Shipping a release (2026-09-03)
+
+A release is **two artefacts, and only one of them is in git.** Getting that wrong is the failure
+this section exists to prevent: the code deploys cleanly, every scripted line misses the cache, and
+the call is held in a voice nobody chose.
+
+| Artefact | Where it lives | Size | How it travels |
+|---|---|---|---|
+| Code, config, **reference clips** | git — `voices/refs/*.wav` is tracked | 7 MB | `git pull` |
+| **Pre-rendered cache** — `voices/cache/` | gitignored | ~1 GB, 4,680 wavs | `rsync`, out of band |
+
+The cache is gitignored because it is generated, large, and changes whenever the script, a voice or
+a persona does. The reference clips are tracked because they are **deployment assets** — the ten
+files that define what the agent sounds like, without which nothing can be rendered at all.
+
+### The runbook
+
+```bash
+# 1 · On the machine that renders. Bring the cache up to date FIRST: the box
+#     must never be the thing that discovers a missing line.
+git pull && make prerender            # prints "N distinct lines, M to render"
+
+# 2 · Ship the cache. Content-addressed, so this is incremental and safe to
+#     repeat; --delete prunes lines the script no longer reaches.
+rsync -av --delete voices/cache/ rhel-box:/opt/voicebot/voices/cache/
+
+# 3 · On the GPU box.
+cd /opt/voicebot && git pull          # brings code, config and voices/refs
+./deploy/rhel/services.sh             # ASR + TTS containers
+make rhel                             # or: docker compose up -d console
+
+# 4 · Verify before anyone dials.
+curl -s localhost:8788/api/health | jq '.ready, .asr, .llm, .tts, .knowledge'
+```
+
+Step 1 before step 3, always. A cache miss on this box does **not** render — it falls through to the
+live voice, which is a different speaker mid-call, and logs `pre-render miss on the server`. That is
+deliberate (a miss on a laptop costs one slow line; here it would stall the turn behind a model
+load), and it means the cache is a precondition rather than an optimisation.
+
+### What the cache holds
+
+`make prerender` covers **1,701 distinct lines**: three personas × two languages × two registers ×
+seven voices, plus both forms of every turn that asks a question — with it, and without it for a
+caller who has already answered. Roughly 2–3 hours from cold on an M-series Mac, and it is
+incremental, so a script change re-renders only what changed.
+
+Keys cover model, language, speaker, reference clip, generation parameters, pacing, target pitch and
+text — nothing platform-specific. So a wav rendered on a MacBook is reused byte-for-byte here, and
+`tests/test_profile_parity.py` fails if the two profiles ever disagree about a value that is in the
+key. A mismatch would not error; it would quietly re-render every line into a slightly different
+voice.
+
+### Mandarin needs its own clips
+
+Each voice clones **two** reference clips — an English speaker and a Mandarin one — and the language
+of the line picks which. Cloned from the English clip, a Mandarin line came back from the recogniser
+with every character right and none of the punctuation: the tones were flat, because the speaker
+being imitated had never spoken Mandarin.
+
+```yaml
+male:
+  ref_audio: {en: voices/refs/male.wav, zh: voices/refs/zm_yunjian.wav}
+  target_f0: {en: 162, zh: 135}
+```
+
+Every male voice clones `zm_yunjian`, every female voice `zf_xiaobei`. Both are tracked in git, so
+`git pull` brings them; `tests/test_mandarin_voice.py` fails if a profile names a clip the
+repository does not carry — which is precisely the failure that is invisible at runtime, because a
+missing clip renders the model's default speaker and nothing downstream can tell.
+
+### The TTS sidecar clones what it is told
+
+Improvised lines only — scripted turns never reach it. The **reference clip travels with the
+request** (`ref_audio` in the `/tts` body), resolved against `/app`, and a named clip that does not
+exist is a `400` rather than a silent fall back to the default speaker.
+
+That means the sidecar container **must have `voices/` mounted**. `docker-compose.yml` does it;
+`deploy/rhel/services.sh` did not until this release, and without it the image's anonymous volume is
+empty and every improvised line is a stranger's voice. The script now mounts it and warns if
+`voices/refs` is missing on the host.
+
+### If something sounds wrong
+
+| Symptom | Cause | Check |
+|---|---|---|
+| Voice changes mid-call | a cache miss fell through to live TTS | `journalctl`/container logs for `pre-render miss on the server` |
+| Every improvised line is the wrong speaker | `voices/` not mounted into the TTS container | `podman inspect voicebot-tts \| grep -A3 Mounts` |
+| Mandarin sounds flat, English fine | Mandarin clips missing, so it fell back to the English one | `make test` — `test_mandarin_voice.py` covers it |
+| Console starts but calls fail | a service is up on the port but serving the wrong model | `/api/health` reports `ready` from `/v1/models`, not liveness |
+| Coverage questions all become callbacks | `unsourced_answers: refuse`, as this profile ships | `/api/health` → `knowledge`; **this is correct behaviour** |

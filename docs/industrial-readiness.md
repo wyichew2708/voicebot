@@ -2,7 +2,7 @@
 
 What "good enough to put in front of a customer" means for this bot, what has
 been done about it, what is measured, and what is still open. Written after
-61 recorded demo calls; every item below traces to something a caller
+81 recorded demo calls; every item below traces to something a caller
 actually said.
 
 ## The bar
@@ -39,12 +39,12 @@ every future change.
 `scripts/eval.py` replays every recorded caller turn through the engine.
 
 ```
-225 caller turns across 45 recorded calls  (keyword layer only)
+270 caller turns across 56 recorded calls  (keyword layer only)
 
-  keyword     210  93.3%      settled for free, in milliseconds
-  clarify       9   4.0%      asked to repeat
-  handoff       6   2.7%      given to a person
-  offered customer care : 0
+  keyword     251  93.0%      settled for free, in milliseconds
+  handoff      10   3.7%      given to a person
+  clarify       9   3.3%      asked to repeat
+  offered customer care : 6  (2.2% of turns)
   31 expectations, 31 met
 ```
 
@@ -103,7 +103,8 @@ A guardrail turn costs 1–2 s of silence on the line. Two things now cover it:
   purpose: "Let me just check that" followed by "sorry, I didn't catch that"
   when the model timed out was a promise and its contradiction.
 - **Warm voices.** Every shipped voice is pre-rendered for every line the
-  script can reach (230 lines). A cold voice is 2–4 s a turn; the console
+  script can reach (1,701 lines across seven voices and two languages). A cold
+  voice is 2–4 s a turn; the console
   says so in amber before a call starts, and the warm-up yields to any live
   call rather than competing with it for the GPU.
 
@@ -131,7 +132,14 @@ In rough order of what would bite first on a real line.
 1. **RHEL end-to-end has never run.** The CUDA path is written to mirror the
    Mac path by calling the same code, and the sidecar refuses to start on the
    English-only model — but none of it has met a GPU. Ship `voices/cache`
-   with the deploy; first run is a smoke test, not a demo.
+   with the deploy; first run is a smoke test, not a demo. The runbook is in
+   [deployments.md](deployments.md#shipping-a-release-2026-09-03), and two
+   defects that would only ever have shown up on that first run are now
+   fixed: the TTS container was never given `voices/`, and the sidecar looked
+   its reference clip up in a two-entry table of its own rather than using
+   the one the console asked for — so five of the seven voices, and every
+   Mandarin line, would have been rendered by the model's default speaker
+   with nothing logged.
 2. **Telephony.** The console talks to a browser microphone. A SIP/PSTN leg
    changes the audio (8 kHz, codec loss), the endpointing and the barge-in
    behaviour. The client VAD constants will need re-measuring against a real

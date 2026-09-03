@@ -8,9 +8,9 @@
 {"caller": "好的你有什么事", "not_contains": ["我叫 Dave"], "contains": ["续保"]}
 {"caller": "呃找我什么事", "not_contains": ["我叫 Dave"]}
 {"caller": "uh, okay, what happen?", "contains_any": ["calling about", "续保"], "note": "that call had already switched to Mandarin"}
-{"caller": "uh, can i request to change my email address?", "contains": ["email address you'd like"], "not_contains": ["on file"]}
-{"caller": "w, y, i, c, h, e, w, alias hotmail dot com.", "contains": ["wyichew@hotmail.com"]}
-{"caller": "uh, you should be able to know.", "contains_any": ["would have to come from you", "is that right"], "not_contains": ["didn't catch"], "note": "spelling now succeeds one turn earlier, so this lands on the read-back"}
+{"caller": "uh, can i request to change my email address?", "contains": ["customer care"], "not_contains": ["on file"], "path": "handoff", "note": "the bot stopped taking address changes over the phone — a change goes to customer care and nothing is written to the record. See docs/handoff-sop.md."}
+{"caller": "w, y, i, c, h, e, w, alias hotmail dot com.", "not_contains": ["wyichew@hotmail.com", "is that right", "is that correct"], "note": "was: the parser had to recover this address. The bot no longer captures one, so what matters now is that it never claims to have taken it down — it turned 'w y i a' into yi@hotmail.com on a real call."}
+{"caller": "uh, you should be able to know.", "not_contains": ["didn't catch", "@"], "note": "same dialogue. Telling us we already hold what we asked for must not be read as a failed attempt at spelling."}
 {"caller": "你是机器人吗", "contains": ["自动语音助理"], "not_contains": ["我叫 Dave"]}
 {"caller": "我在问你是不是机器人", "contains": ["自动语音助理"]}
 {"caller": "可以不要打电话给我了吗", "contains": ["不会再打"], "not_contains": ["没问题。"]}

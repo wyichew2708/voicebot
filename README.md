@@ -59,8 +59,8 @@ Pick the register in the console (**STANDARD / SINGLISH**) before starting a cal
 
 | | |
 |---|---|
-| standard | "Good afternoon Mr Tan. This is Dave calling from Etiqa Insurance. Am I speaking with Mr Tan?" |
-| singlish | "Good afternoon Mr Tan ah. I'm Dave, calling from Etiqa Insurance. Speaking to Mr Tan, is it?" |
+| standard | "Good afternoon Mr Tan. This is Michael calling from Etiqa Insurance. Am I speaking with Mr Tan?" |
+| singlish | "Good afternoon Mr Tan ah. I'm Michael, calling from Etiqa Insurance. Speaking to Mr Tan, is it?" |
 | standard | "Please look through the email and renew by the due date, and do reply once payment is made." |
 | singlish | "Just look through the email, then renew before the due date. After you pay, reply to the email can already." |
 
@@ -277,7 +277,7 @@ real:
 |---|---|
 | Policyholder | which synthetic record the call runs against |
 | Opening language | English or 华语 — the language the agent opens in |
-| Agent voice | male / female, both pre-rendered |
+| Agent voice | one of seven, all pre-rendered |
 | Register | standard or Singlish wording |
 
 All four are fixed once a call starts — changing language, voice or register mid-call is jarring,
@@ -368,15 +368,24 @@ curl -o reply.wav http://127.0.0.1:8788/api/last-reply.wav && open reply.wav
 If that is audible and the console is not, the problem is the browser's audio output rather than the
 app — an embedded preview pane often has none.
 
-## Two voices, switchable
+## Seven voices, switchable
 
-The console has a **MALE / FEMALE** switch. Both are **Chatterbox multilingual** (MIT) cloning a
-fixed reference clip:
+The console offers a voice picker. All are **Chatterbox multilingual** (MIT) cloning a fixed
+reference clip, and each clones a **second clip for Mandarin** (see above):
 
-| id | reference |
-|---|---|
-| `male` | `voices/refs/male.wav` — Qwen3-TTS "aiden" |
-| `female` | `voices/refs/female.wav` — Qwen3-TTS "vivian" |
+| id | agent name | English reference |
+|---|---|---|
+| `male` | Michael | `voices/refs/male.wav` — Qwen3-TTS "aiden" |
+| `female` | Michelle | `voices/refs/female.wav` — Qwen3-TTS "vivian" |
+| `isabella` | Michelle | `voices/refs/bf_isabella.wav` — UK, steadiest of the set |
+| `bella` | Michelle | `voices/refs/af_bella.wav` — US, warm |
+| `sarah` | Michelle | `voices/refs/af_sarah.wav` — US, brighter |
+| `michael` | Michael | `voices/refs/am_michael.wav` — US, deeper |
+| `eric` | Michael | `voices/refs/am_eric.wav` — nearest to the original Male |
+
+The **agent name follows the voice** (`script.AGENT_NAMES`): a voice that presents as a woman
+introducing itself as Michael is the kind of detail a caller cannot name but does notice. The name
+is part of the line, so adding a voice means re-rendering that voice's opening turns.
 
 Voice is **fixed for the duration of a call**. Pick before dialling.
 
@@ -433,8 +442,8 @@ turns are rendered once by `make prerender` and played from disk.
 
 The cache is content-addressed on model + language + voice description + text, so changing the
 script, the register or the voice simply misses and re-renders rather than serving a stale line or
-mixing two speakers. `make prerender` currently holds **98 lines / 28 MB** — three personas, two
-languages, two registers, two voices.
+mixing two speakers. `make prerender` currently holds **1,701 lines / ~1 GB** — three personas, two
+languages, two registers, seven voices, and both name orders of the turns that ask a question.
 
 ```bash
 make prerender    # after changing script, personas, or a voice description
@@ -547,7 +556,7 @@ laptop, in compose (where they are service names) and on a bare host:
 The console image is **CPU-only and small** — on this deployment it loads no models at all, so it
 builds in seconds and restarts instantly, independent of CUDA versions.
 
-`voices/` is a **mount, not a copy**: 28 MB of pre-rendered audio that changes when the script or
+`voices/` is a **mount, not a copy**: ~1 GB of pre-rendered audio that changes when the script or
 voice changes, not when the code does. Regenerate it with `make prerender` and restart the console;
 no rebuild.
 

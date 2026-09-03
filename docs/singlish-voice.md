@@ -83,7 +83,7 @@ optimises the accent back out.
 3. **Try `mesolitica/VITS-female-singlish` today.** Already trained on the
    Singapore National Speech Corpus. Caveats: standard VITS in PyTorch at
    22 kHz (`model.pth`, not MLX — another sidecar), it needs malaya-speech's
-   symbol set, and it is a *female* voice while our agent is "Dave". Worth an
+   symbol set, and it is a *female* voice, which suits the Michelle voices and not the Michael ones. Worth an
    hour purely to hear what NSC-trained Singlish TTS sounds like before
    committing to option 2.
 
