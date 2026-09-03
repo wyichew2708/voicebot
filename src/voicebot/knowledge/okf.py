@@ -76,6 +76,17 @@ class Page:
         return tuple(str(a) for a in self.meta.get("aliases", []) or ())
 
     @property
+    def fallback_aliases(self) -> tuple[str, ...]:
+        """Ways of asking what this thing covers, rather than names for it.
+
+        Tried only after every page has failed to match on a name of its own,
+        so that "what does the policy cover for renovation" reaches the
+        renovation page instead of the overview whose alias happens to be
+        longer.
+        """
+        return tuple(str(a) for a in self.meta.get("fallback_aliases", []) or ())
+
+    @property
     def authority(self) -> tuple[str, ...]:
         return tuple(str(a) for a in self.meta.get("authority", []) or ())
 

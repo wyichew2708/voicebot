@@ -216,10 +216,13 @@ def test_golden(case, bundle):
 
     assert got is not None, f"{case['note']}: nothing answered"
     assert got.page_id == case["page"]
+    # Case-insensitive: a case should pin what is said, not where a sentence
+    # happens to start.
+    said = got.text.lower()
     for needle in case.get("must_contain", []):
-        assert needle in got.text, f"{needle!r} missing from {got.text!r}"
+        assert needle.lower() in said, f"{needle!r} missing from {got.text!r}"
     for needle in case.get("must_not_contain", []):
-        assert needle not in got.text, f"{needle!r} should not be spoken"
+        assert needle.lower() not in said, f"{needle!r} should not be spoken"
 
 
 # --- warming ---------------------------------------------------------------

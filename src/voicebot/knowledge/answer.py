@@ -96,19 +96,25 @@ def lookup(text: str, lang: str, *, bundle: Bundle | None = None,
     when = when or date.today()
     low = text.lower()
 
-    best: tuple[int, Page, str] | None = None
-    for page in candidates(bundle, when=when, jurisdiction=jurisdiction,
-                           allow_unsourced=allow_unsourced, products=products):
-        spoken = page.spoken
-        if not spoken.get(lang) and not spoken.get("en"):
-            continue
-        for alias in page.aliases:
-            if _alias_hit(alias, text, low):
-                # Longest alias wins. "home contents" must beat "contents",
-                # or the general page answers the specific question.
-                score = len(alias)
-                if best is None or score > best[0]:
-                    best = (score, page, alias)
+    speakable = [p for p in candidates(bundle, when=when, jurisdiction=jurisdiction,
+                                       allow_unsourced=allow_unsourced,
+                                       products=products)
+                 if p.spoken.get(lang) or p.spoken.get("en")]
+
+    def match(named: bool) -> "tuple[int, Page, str] | None":
+        # Longest alias wins within a pass. "home contents" must beat
+        # "contents", or the general page answers the specific question.
+        best: tuple[int, Page, str] | None = None
+        for page in speakable:
+            for alias in (page.aliases if named else page.fallback_aliases):
+                if _alias_hit(alias, text, low) and (best is None or len(alias) > best[0]):
+                    best = (len(alias), page, alias)
+        return best
+
+    # Names first, everywhere, before any page's "what does it cover" phrasing
+    # is considered. A specific question must not be shadowed by a longer
+    # general one.
+    best = match(named=True) or match(named=False)
     if best is None:
         return None
 

@@ -143,6 +143,28 @@ Each exists because breaking it produces one specific wrong answer.
 Warnings are treated as errors by the test suite. A warning nobody clears is a
 warning nobody reads.
 
+## Two kinds of alias
+
+A page carries names for the thing (`aliases`) and ways of asking what it
+covers (`fallback_aliases`). Retrieval tries every page's names first, and
+only then every page's question phrasings.
+
+The order is not a detail. "What does the policy cover for renovation" must
+reach the renovation page, and a single pool ranked by longest match hands it
+to the overview instead, because the general phrasing is the longer string.
+
+The gap this closed came from a recorded call. A customer asked "may I know
+more details of this policy?" and then "why is the coverage of this policy?".
+The first went to the model, which failed, and the script moved on. The second
+was correctly routed to `coverage`, found no page, and became an offer of a
+callback. The call ended without renewing, logged as off-topic, while the home
+overview page sat in the bundle holding exactly the right answer. Every alias
+had been written as a name for the product and none as a way of asking about
+it.
+
+Both lines are now cases in the golden set, and both are answered by the
+keyword layer without a model call at all.
+
 ## Scoping, and why answers disappear
 
 A page answers only for the products a call is about. `concept/free-look` is
