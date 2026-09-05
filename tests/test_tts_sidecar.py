@@ -174,7 +174,8 @@ def test_fish_in_process_takes_the_transcript_and_the_final_chunk(monkeypatch, t
 def test_vibevoice_is_a_preset_english_voice(monkeypatch, tmp_path):
     """No cloning and no Mandarin: the clip is ignored, Mandarin is a 400,
     and the text goes through the processor with the cached voice prompt
-    exactly as the authors' own inference script does."""
+    exactly as the authors' own inference script does. The request's gender
+    picks the preset: Carter for a man, Emma for a woman."""
     mod = _sidecar()
     calls: list = []
 
@@ -196,26 +197,42 @@ def test_vibevoice_is_a_preset_english_voice(monkeypatch, tmp_path):
     monkeypatch.setitem(sys.modules, "torch",
                         types.SimpleNamespace(is_tensor=lambda v: False))
     from fastapi.testclient import TestClient
+    presets = {"en-Carter_man": "/x/en-Carter_man.pt", "en-Emma_woman": "/x/en-Emma_woman.pt"}
+    prompts = {"en-Carter_man": {"voice": "Carter"}, "en-Emma_woman": {"voice": "Emma"}}
     monkeypatch.setitem(mod._state, "m", {"model": _Model(), "processor": _Processor(),
-                                          "prompt": {"voice": "Carter"}, "device": "cpu",
-                                          "voice": "Carter.pt"})
+                                          "presets": presets, "prompts": prompts,
+                                          "device": "cpu"})
     monkeypatch.setitem(mod._state, "dev", "cpu")
     monkeypatch.setitem(mod._state, "engine_name", "vibevoice")
+    monkeypatch.delenv("VIBEVOICE_VOICE", raising=False)
     c = TestClient(mod.app)
 
     r = c.post("/tts", json={"text": "就是续保的事。", "lang": "zh", "voice": "male"})
     assert r.status_code == 400 and "vibevoice" in r.text
-    r = c.post("/tts", json={"text": "No problem [chuckle].", "lang": "en", "voice": "male",
-                             "ref_audio": "voices/refs/male.wav"})
+    r = c.post("/tts", json={"text": "No problem [chuckle].", "lang": "en", "voice": "bella",
+                             "gender": "female", "ref_audio": "voices/refs/male.wav"})
     assert r.status_code == 200, r.text
-    assert calls[0] == ("process", "No problem [chuckle].", {"voice": "Carter"})
+    assert calls[0] == ("process", "No problem [chuckle].", {"voice": "Emma"})
     kw = calls[1][1]
-    assert kw["cfg_scale"] == mod.VibeVoice.CFG_SCALE and kw["all_prefilled_outputs"] == {"voice": "Carter"}
-    assert kw["all_prefilled_outputs"] is not mod._state["m"]["prompt"], "a copy per line"
+    assert kw["cfg_scale"] == mod.VibeVoice.CFG_SCALE and kw["all_prefilled_outputs"] == {"voice": "Emma"}
+    assert kw["all_prefilled_outputs"] is not prompts["en-Emma_woman"], "a copy per line"
     with wave.open(io.BytesIO(r.content)) as w:      # 24 kHz in, 16 kHz out
         assert w.getframerate() == 16000 and w.getnframes() == 3200
+    calls.clear()
+    c.post("/tts", json={"text": "Hi.", "lang": "en", "voice": "male"})
+    assert calls[0][2] == {"voice": "Carter"}, "no gender sent: the voice id decides"
     h = c.get("/health").json()
     assert h["clones"] is False and h["languages"] == ["en"]
+
+
+def test_vibevoice_matches_a_preset_by_name_the_way_the_authors_do():
+    mod = _sidecar()
+    presets = {"en-Carter_man": "a", "en-Emma_woman": "b", "de-Spk0_man": "c"}
+    assert mod.VibeVoice.match(presets, "Carter") == "en-Carter_man"
+    assert mod.VibeVoice.match(presets, "emma") == "en-Emma_woman"
+    assert mod.VibeVoice.match(presets, "en-Emma_woman") == "en-Emma_woman"
+    assert mod.VibeVoice.match(presets, "man") is None, "ambiguous is not a match"
+    assert mod.VibeVoice.match(presets, "Zoe") is None
 
 
 def test_vibevoice_finds_its_presets_in_the_clone(tmp_path):

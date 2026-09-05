@@ -12,6 +12,7 @@ import asyncio
 import io
 import json
 import logging
+import re
 import time
 import wave
 from pathlib import Path
@@ -151,6 +152,30 @@ async def health() -> JSONResponse:
     })
 
 
+# --------------------------------------------------------------- samples
+# Recordings to listen to without a model: the shipped voices and the
+# speakers they came from, plus whatever this machine has rendered.
+
+
+@app.get("/api/samples")
+async def list_samples() -> JSONResponse:
+    from . import samples
+
+    return JSONResponse({"samples": await asyncio.get_running_loop()
+                         .run_in_executor(None, samples.listing)})
+
+
+@app.get("/api/samples/{source}/{name}")
+async def get_sample(source: str, name: str) -> Response:
+    from . import samples
+
+    path = samples.resolve(f"{source}/{name}")
+    if path is None:
+        return Response(status_code=404)
+    return FileResponse(path, media_type="audio/wav",
+                        headers={"Cache-Control": "no-store"})
+
+
 # ----------------------------------------------------------- TTS models
 # The experiments switch. Nothing here touches the shipped path until a
 # model is selected; then every agent line goes through it, cache included,
@@ -228,6 +253,16 @@ async def tts_say(request: Request) -> Response:
     if not sp.pcm:
         return JSONResponse({"error": "no audio came back"}, status_code=502)
     _state["last_audio"] = sp.pcm
+    # Kept, so it appears in the samples gallery beside the shipped ones:
+    # <model>--<voice>--<lang>--<a few words>.wav under voices/bench/say.
+    try:
+        from . import samples
+        slug = "-".join(re.sub(r"[^\w]+", " ", text).split()[:4]).lower()[:32] or "line"
+        samples.RENDERED.mkdir(parents=True, exist_ok=True)
+        keep = samples.RENDERED / f"{model or 'shipped'}--{voice or 'voice'}--{lang}--{slug}.wav"
+        keep.write_bytes(_wav_bytes(sp.pcm, sp.sample_rate))
+    except OSError as exc:                                  # pragma: no cover
+        log.warning("could not keep the rendered line: %s", exc)
     return Response(content=_wav_bytes(sp.pcm, sp.sample_rate), media_type="audio/wav",
                     headers={"Cache-Control": "no-store",
                              "X-Model": model or (lab.active if lab and lab.active else "shipped"),
@@ -277,6 +312,9 @@ def _voice_rows() -> list[dict]:
         refs = v.get("ref_audio")
         row = {"id": vid, "label": v.get("label", vid),
                "note": v.get("note", ""),
+               "gender": v.get("gender") or (
+                   "female" if float(for_language(v.get("target_f0"), "en") or 0) >= 165
+                   else "male"),
                "custom": mine is not None,
                "target_f0": float(for_language(v.get("target_f0"), "en") or 0),
                "mandarin": isinstance(refs, dict) and "zh" in refs}

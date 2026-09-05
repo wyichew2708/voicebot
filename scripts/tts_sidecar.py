@@ -305,11 +305,12 @@ class Kokoro(Engine):
     PRESETS = {("male", "en"): "am_michael", ("male", "zh"): "zm_yunjian",
                ("female", "en"): "af_heart", ("female", "zh"): "zf_xiaobei"}
 
-    def preset(self, voice: str, lang: str) -> str:
-        """KOKORO_VOICE_EN / KOKORO_VOICE_ZH win; else the voice's own
-        gender's preset; else the male one."""
+    def preset(self, gender: str, lang: str) -> str:
+        """KOKORO_VOICE_EN / KOKORO_VOICE_ZH win; else the gender's preset;
+        else the male one. `gender` is what the request says, or the voice
+        id when it happens to be one of the two."""
         return (os.environ.get(f"KOKORO_VOICE_{lang.upper()}")
-                or self.PRESETS.get((voice, lang))
+                or self.PRESETS.get((gender, lang))
                 or self.PRESETS[("male", lang)])
 
     def load(self, device: str) -> None:            # pragma: no cover - model
@@ -324,10 +325,10 @@ class Kokoro(Engine):
             pipes[code] = KPipeline(lang_code=code)
         return pipes[code]
 
-    def synth(self, text, lang, ref, ref_text, voice: str = "male"):
+    def synth(self, text, lang, ref, ref_text, gender: str = "male"):
         import numpy as np
         parts = [_tensor_audio(audio) for _gs, _ps, audio in
-                 self._pipeline(lang)(text, voice=self.preset(voice, lang))]
+                 self._pipeline(lang)(text, voice=self.preset(gender, lang))]
         audio = np.concatenate(parts) if parts else np.zeros(0, dtype=np.float32)
         return audio, 24000
 
@@ -446,9 +447,12 @@ class VibeVoice(Engine):
     product it is a preset English voice, like Kokoro with more character.
 
     Installed from the repository with its `streamingtts` extra; the voice
-    presets live in the clone under demo/voices/streaming_model. VIBEVOICE_HOME
-    is the clone, VIBEVOICE_MODEL the HF repo or local path, VIBEVOICE_VOICE
-    the preset name (default Carter).
+    presets live in the clone under demo/voices/streaming_model as
+    `en-Carter_man.pt`, `en-Emma_woman.pt` and so on. VIBEVOICE_HOME is the
+    clone, VIBEVOICE_MODEL the HF repo or local path. The request's gender
+    picks the preset — VIBEVOICE_VOICE_MALE / VIBEVOICE_VOICE_FEMALE
+    (default Carter / Emma), matched by name the way the authors' own
+    script matches them, so "Carter" finds en-Carter_man.
     """
     name = "vibevoice"
     model_id = os.environ.get("VIBEVOICE_MODEL", "microsoft/VibeVoice-Realtime-0.5B")
@@ -457,14 +461,36 @@ class VibeVoice(Engine):
     needs = ("git clone https://github.com/microsoft/VibeVoice $VIBEVOICE_HOME && "
              "pip install -e '$VIBEVOICE_HOME[streamingtts]'")
     CFG_SCALE = 1.5
+    DEFAULTS = {"male": "Carter", "female": "Emma"}
 
     @staticmethod
     def presets(home: str) -> dict[str, str]:
-        """The shipped voice prompts, by name."""
+        """The shipped voice prompts, by file stem."""
         import glob
         found = glob.glob(os.path.join(home, "demo", "voices", "streaming_model",
                                        "**", "*.pt"), recursive=True)
         return {os.path.splitext(os.path.basename(p))[0]: p for p in sorted(found)}
+
+    @staticmethod
+    def match(presets: dict[str, str], want: str) -> str | None:
+        """The stem for a name: exact, else the one stem containing it
+        (case-insensitive), else None. "Carter" -> "en-Carter_man"."""
+        if want in presets:
+            return want
+        hits = [k for k in presets if want.lower() in k.lower()]
+        return hits[0] if len(hits) == 1 else None
+
+    def preset_for(self, gender: str) -> str:
+        want = (os.environ.get(f"VIBEVOICE_VOICE_{gender.upper()}")
+                or os.environ.get("VIBEVOICE_VOICE")
+                or self.DEFAULTS.get(gender, self.DEFAULTS["male"]))
+        presets = _state["m"]["presets"]
+        stem = self.match(presets, want)
+        if stem is None:
+            stem = next(iter(presets))
+            log.warning("no VibeVoice preset matching %r; using %s (have: %s)",
+                        want, stem, ", ".join(presets))
+        return stem
 
     def load(self, device: str) -> None:            # pragma: no cover - model
         import torch
@@ -480,11 +506,6 @@ class VibeVoice(Engine):
         if not presets:
             raise RuntimeError(f"no VibeVoice voice presets under {home}/demo/voices/"
                                "streaming_model — VIBEVOICE_HOME must point at the clone")
-        want = os.environ.get("VIBEVOICE_VOICE", "Carter")
-        preset = presets.get(want) or next(iter(presets.values()))
-        if want not in presets:
-            log.warning("no VibeVoice preset %r; using %s (have: %s)", want,
-                        os.path.basename(preset), ", ".join(presets))
 
         processor = VibeVoiceStreamingProcessor.from_pretrained(self.model_id)
         dtype = torch.bfloat16 if device == "cuda" else torch.float32
@@ -501,16 +522,28 @@ class VibeVoice(Engine):
                                           device_map=device, attn_implementation="sdpa")
         model.eval()
         model.set_ddpm_inference_steps(num_steps=5)
-        with torch.serialization.safe_globals([BaseModelOutputWithPast, DynamicCache]):
-            prompt = torch.load(preset, map_location=device, weights_only=True)
-        _state["m"] = {"model": model, "processor": processor, "prompt": prompt,
-                       "device": device, "voice": os.path.basename(preset)}
+        _state["m"] = {"model": model, "processor": processor, "presets": presets,
+                       "prompts": {}, "device": device}
 
-    def synth(self, text, lang, ref, ref_text):
+    def prompt_for(self, gender: str):
+        """The cached voice prompt for this gender's preset, loaded once."""
+        m = _state["m"]
+        stem = self.preset_for(gender)
+        if stem not in m["prompts"]:
+            import torch
+            from transformers.cache_utils import DynamicCache
+            from transformers.modeling_outputs import BaseModelOutputWithPast
+            with torch.serialization.safe_globals([BaseModelOutputWithPast, DynamicCache]):
+                m["prompts"][stem] = torch.load(m["presets"][stem], map_location=m["device"],
+                                                weights_only=True)
+        return m["prompts"][stem]
+
+    def synth(self, text, lang, ref, ref_text, gender: str = "male"):
         import copy
         import torch
         m = _state["m"]
-        model, processor, prompt = m["model"], m["processor"], m["prompt"]
+        model, processor = m["model"], m["processor"]
+        prompt = self.prompt_for(gender)
         inputs = processor.process_input_with_cached_prompt(
             text=text, cached_prompt=prompt, padding=True,
             return_tensors="pt", return_attention_mask=True)
@@ -672,10 +705,16 @@ async def tts(request: Request) -> Response:
                     "preset speaker is used", engine.name)
     ref_text = _reference_text(ref, body.get("ref_text"))
 
+    # Which preset a non-cloning engine picks. The console sends the voice's
+    # gender; an older caller sends only a voice id, which is enough when
+    # the id is one of the two.
+    gender = str(body.get("gender") or "").lower()
+    if gender not in ("male", "female"):
+        gender = voice if voice in ("male", "female") else "male"
     t0 = time.time()
     try:
-        if isinstance(engine, Kokoro):
-            audio, src_sr = engine.synth(text, lang, ref, ref_text, voice=voice)
+        if isinstance(engine, (Kokoro, VibeVoice)):
+            audio, src_sr = engine.synth(text, lang, ref, ref_text, gender=gender)
         else:
             audio, src_sr = engine.synth(text, lang, ref, ref_text)
     except Unsupported as exc:

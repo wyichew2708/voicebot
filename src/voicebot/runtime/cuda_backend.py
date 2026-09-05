@@ -175,7 +175,8 @@ class CUDABackend(Backend):
                       latency_ms=int((time.perf_counter() - t0) * 1000))
 
     def _speak_one(self, piece: str, lang_code: str, voice: str,
-                   ref: str | None = None, ref_text: str | None = None) -> bytes:
+                   ref: str | None = None, ref_text: str | None = None,
+                   gender: str | None = None) -> bytes:
         """One fragment, one language, from the sidecar.
 
         The reference clip travels with the request. The sidecar used to keep
@@ -192,6 +193,8 @@ class CUDABackend(Backend):
             body["ref_audio"] = ref
         if ref_text:
             body["ref_text"] = ref_text
+        if gender:
+            body["gender"] = gender          # for engines that pick a preset
         raw = self._post(url, json.dumps(body).encode(), "application/json")
         with wave.open(io.BytesIO(raw)) as w:
             if w.getframerate() != self.sample_rate:
@@ -218,12 +221,13 @@ class CUDABackend(Backend):
         # in the cache, rather than by a second voice at the seam.
         ref = self.prerender.reference_for(voice, lang)
         ref_text = self.prerender.reference_text_for(voice, lang)
+        gender = self.prerender.gender_for(voice)
 
         def _work() -> bytes:
             out = bytearray()
             for i, (piece, piece_lang) in enumerate(pieces):
                 part = self._speak_one(piece, self.prerender.lang_code(piece_lang),
-                                       voice, ref, ref_text)
+                                       voice, ref, ref_text, gender)
                 if len(pieces) > 1:
                     part = P.trim(part, head=(i > 0), tail=(i < len(pieces) - 1),
                                   keep_ms=10, sample_rate=self.sample_rate)

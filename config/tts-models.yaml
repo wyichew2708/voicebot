@@ -10,8 +10,10 @@
 #                            sidecar's address comes from backend.tts.sidecars
 #                            in the profile or VOICEBOT_TTS_SIDECARS
 #
-# A model that does not clone names a `speaker` preset per language, and
-# `lang_codes` maps this repo's en/zh to what the model calls them.
+# A model that does not clone names a `speaker` preset per gender and per
+# language — it follows the voice picker's male/female, since it cannot
+# follow the clip — and `lang_codes` maps this repo's en/zh to what the model
+# calls them.
 #
 # Experiments stage: licence is recorded, not enforced. See docs/tts-models.md.
 models:
@@ -54,7 +56,9 @@ models:
     note: "MIT · English only · preset voices"
     languages: [en]
     clone: false
-    speaker: {en: Carter}
+    speaker:
+      male: {en: Carter}
+      female: {en: Emma}
     mlx: {repo: mlx-community/VibeVoice-Realtime-0.5B-8bit}
     gpu: {engine: vibevoice}
 
@@ -63,7 +67,9 @@ models:
     note: "Apache-2.0 · preset voices · the fallback"
     languages: [en, zh]
     clone: false
-    speaker: {en: am_michael, zh: zm_yunjian}
+    speaker:
+      male: {en: am_michael, zh: zm_yunjian}
+      female: {en: af_heart, zh: zf_xiaobei}
     lang_codes: {en: a, zh: z}
     mlx: {repo: mlx-community/Kokoro-82M-4bit}
     gpu: {engine: kokoro}

@@ -147,6 +147,18 @@ class PrerenderCache:
             key = lang
         return texts.get(key) or None
 
+    def gender_for(self, voice: str | None = None) -> str:
+        """"male" or "female", for models that pick a preset rather than
+        clone. Declared on the voice where the profile says; a recorded voice
+        carries none, so its measured pitch decides, with the boundary where
+        adult voices actually divide rather than at the midpoint."""
+        entry = self._entry(voice)
+        declared = str(entry.get("gender") or "").lower()
+        if declared in ("male", "female"):
+            return declared
+        f0 = float(for_language(entry.get("target_f0"), "en") or 0)
+        return "female" if f0 >= 165 else "male"
+
     def target_f0(self, voice: str | None = None, lang: str | None = None) -> float:
         """Pitch every line of this voice is normalised to, in Hz. 0 disables.
 

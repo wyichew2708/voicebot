@@ -594,7 +594,10 @@ wrong when they diverge, and none of them raises an error:
 
 **In the console:** *Call setup → TTS model — experiment*. Pick a model from
 `config/tts-models.yaml` and every line of the next call is spoken by it, cache bypassed; the box
-under it says one typed line in that model without a call. **From the terminal:**
+under it says one typed line in that model without a call. The *Agent voice* picker supplies the
+speaker — four female, three male — and a preset-only model follows that voice's gender. *Voice
+samples → LISTEN* plays recordings of every model tried so far, female and male, plus every line
+you have said in the box, with no model loaded. **From the terminal:**
 
 ```bash
 make tts-models                                     # what runs on this machine, and why not

@@ -43,9 +43,21 @@ a clip changes the speaker (else `speaker` presets per language and `lang_codes`
 the GPU engine. A different quantisation is one line changed. The switch, the CLI and the
 benchmark all pick it up on the next request.
 
-Two things the switch does not do. It does not change the *voice* — the reference clips and
-presets a call uses are still the voice picker's — so the comparison is model against model on
-the same speaker. And it is fixed for the duration of a call, like the voice and the register.
+**Voices, female and male.** The switch does not change the *voice* — the agent voice picker
+does. Seven ship: Female, Isabella, Bella and Sarah (♀), Male, Michael and Eric (♂), each a
+reference clip a cloning model copies. A model that cannot clone (Kokoro, VibeVoice) follows the
+picked voice's gender instead — `af_heart`/`zf_xiaobei` or Emma for a woman, `am_michael`/
+`zm_yunjian` or Carter for a man — so picking Bella and then Kokoro still gets a woman. Which
+gender a voice is shows in the picker; a recorded voice is inferred from its pitch.
+
+**Listening without a model.** *Voice samples → LISTEN* in the console plays recordings from
+`samples/` — the shipped voices, the Qwen3-TTS speakers the clips came from, the described
+Singaporean voices, a few other models — filtered by female, male, or *mine*: every line said in
+the SAY box is kept under `voices/bench/say/` and appears there a moment later, named by model,
+voice and language. Nothing in that panel needs a model loaded. `samples/index.yaml` is the
+catalogue; a file without an entry is still served with the gender guessed from its name.
+
+The switch is fixed for the duration of a call, like the voice and the register.
 
 ## The candidates in one table
 

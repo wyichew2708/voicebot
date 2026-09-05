@@ -59,7 +59,7 @@ class ModelSpec:
     note: str = ""
     languages: tuple[str, ...] = ()          # empty: anything
     clone: bool = True
-    speaker: dict[str, str] = field(default_factory=dict)
+    speaker: dict[str, Any] = field(default_factory=dict)   # {lang: name} or {gender: {lang: name}}
     lang_codes: dict[str, str] = field(default_factory=dict)
     mlx: dict[str, str] = field(default_factory=dict)
     gpu: dict[str, str] = field(default_factory=dict)
@@ -70,10 +70,18 @@ class ModelSpec:
     def lang_code(self, lang: str) -> str:
         return self.lang_codes.get(lang, lang)
 
-    def speaker_for(self, lang: str) -> str | None:
-        if not self.speaker:
+    def speaker_for(self, lang: str, gender: str = "male") -> str | None:
+        """The preset for this language and, where the model offers both, this
+        gender — falling back to the other gender before falling back to
+        another language, since a wrong-gender voice is still the language."""
+        table: Any = self.speaker
+        if not table:
             return None
-        return self.speaker.get(lang) or self.speaker.get("en") or next(iter(self.speaker.values()))
+        if isinstance(next(iter(table.values())), dict):        # {gender: {lang: name}}
+            table = table.get(gender) or table.get("male") or table.get("female") or {}
+        if not table:
+            return None
+        return table.get(lang) or table.get("en") or next(iter(table.values()), None)
 
     def describe(self) -> dict[str, Any]:
         return {"id": self.id, "label": self.label, "note": self.note,
@@ -95,7 +103,8 @@ def load_registry(path: Path | str | None = None) -> dict[str, ModelSpec]:
             id=str(mid), label=str(entry.get("label", mid)), note=str(entry.get("note", "")),
             languages=tuple(str(l) for l in (entry.get("languages") or [])),
             clone=bool(entry.get("clone", True)),
-            speaker={str(k): str(v) for k, v in (entry.get("speaker") or {}).items()},
+            speaker={str(k): ({str(a): str(b) for a, b in v.items()} if isinstance(v, dict) else str(v))
+                     for k, v in (entry.get("speaker") or {}).items()},
             lang_codes={str(k): str(v) for k, v in (entry.get("lang_codes") or {}).items()},
             mlx={str(k): str(v) for k, v in (entry.get("mlx") or {}).items()},
             gpu={str(k): str(v) for k, v in (entry.get("gpu") or {}).items()})
@@ -103,7 +112,8 @@ def load_registry(path: Path | str | None = None) -> dict[str, ModelSpec]:
 
 
 def generate_kwargs(spec: ModelSpec, text: str, lang: str,
-                    ref: str | None, ref_text: str | None) -> dict[str, Any]:
+                    ref: str | None, ref_text: str | None,
+                    gender: str = "male") -> dict[str, Any]:
     """What an mlx-audio `generate` is handed for this model and this piece.
 
     A cloning model takes the clip (and its transcript when there is one); a
@@ -119,7 +129,7 @@ def generate_kwargs(spec: ModelSpec, text: str, lang: str,
         if ref_text:
             kw["ref_text"] = ref_text
     else:
-        speaker = spec.speaker_for(lang)
+        speaker = spec.speaker_for(lang, gender)
         if speaker:
             kw["voice"] = speaker
     return kw
@@ -276,6 +286,7 @@ class MLXLab(Lab):
 
         ref = self._prerender.reference_for(voice, lang) if spec.clone else None
         ref_text = self._prerender.reference_text_for(voice, lang) if spec.clone else None
+        gender = self._prerender.gender_for(voice)
         pieces = segment_by_script(text, lang)
         parts: list[bytes] = []
         if spec.mlx.get("package") == "f5-tts-mlx":
@@ -286,7 +297,7 @@ class MLXLab(Lab):
 
         model = self._load(spec.mlx["repo"])
         for piece, piece_lang in pieces:
-            kw = generate_kwargs(spec, piece, piece_lang, ref, ref_text)
+            kw = generate_kwargs(spec, piece, piece_lang, ref, ref_text, gender)
             buf = bytearray()
             for seg in model.generate(**kw):
                 audio = np.asarray(getattr(seg, "audio", seg), dtype=np.float32).squeeze()
