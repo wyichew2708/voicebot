@@ -1,227 +1,219 @@
-# TTS candidates — what they are, what they may be used for, how to try them here
+# TTS candidates — what they are, how to try each one here, and what fits
 
 A shortlist of seven self-hosted TTS models was proposed for this platform: CosyVoice 3,
-Fish Speech S2, Chatterbox Turbo, F5-TTS, IndexTTS 2, Kokoro and VibeVoice Realtime. This is
-the check of that list against **this product** — an outbound insurance call that must speak
-English and Mandarin in one voice, on-premise, commercially — followed by what was built so
-each can be tried without the console, the cache or the call engine learning anything new.
+Fish Speech S2, Chatterbox Turbo, F5-TTS, IndexTTS 2, Kokoro and VibeVoice Realtime. **All
+seven are now runnable behind the same sidecar and the same benchmark**, on the GPU box and —
+where an MLX port exists — on the Mac. This page is the assessment of each against **this
+product** (an outbound insurance call that must speak English and Mandarin in one voice), the
+exact way to run each, and the benchmark to compare them on.
 
-Licences and language lists below were read from the projects' own repositories and model
-cards on 2026-09-05. They change; re-check before anything ships.
+**This is the experiments stage.** Nothing here ships to a customer, so licence is recorded
+as a fact about each model rather than a gate on trying it. It becomes a gate the day one of
+them is chosen, which is why it is written down now rather than rediscovered then. Licences
+and language lists were read from the projects' own repositories and model cards on
+2026-09-05; they change.
 
-## The verdict in one table
+## The candidates in one table
 
-| Model | Licence (weights) | zh | ms | ta | Clones a clip | Fits this product |
-|---|---|---|---|---|---|---|
-| **Chatterbox multilingual v3** (in use) | MIT | ✅ | ✅ | ❌ | ✅ | the incumbent, and the bar |
-| **CosyVoice 3** 0.5B | Apache-2.0 | ✅ | ❌ | ❌ | ✅ (transcript helps) | **the one serious challenger** |
-| Chatterbox Turbo 350M | MIT | ❌ **English only** | ❌ | ❌ | ✅ (clip required) | English live voice only |
-| IndexTTS-2 1.7B | bilibili Model Use License | ✅ | ❌ | ❌ | ✅ | listen; legal review; heavy |
-| Kokoro 82M | Apache-2.0 | ✅ | ❌ | ❌ | ❌ preset voices | already the fallback voice |
-| F5-TTS | code MIT, **weights CC-BY-NC-4.0** | ✅ | ❌ | ❌ | ✅ (transcript helps) | trial only — non-commercial |
-| Fish Speech S2-Pro ~5B | **Fish Audio Research License** | ✅ | ✅ | ❌ | ✅ (transcript required) | trial only — non-commercial |
-| VibeVoice Realtime 0.5B | MIT | ❌ **English only** | ❌ | ❌ | ❌ not documented | not added |
+| Model | Engine | Weights licence | zh | ms | Clones a clip | Mac (MLX) | Fit for this product |
+|---|---|---|---|---|---|---|---|
+| **Chatterbox multilingual v3** (in use) | `chatterbox` | MIT | ✅ | ✅ | ✅ | mlx-audio | the incumbent, and the bar |
+| **CosyVoice 3** 0.5B | `cosyvoice3` | Apache-2.0 | ✅ | ❌ | ✅ (transcript helps) | mlx-audio-plus fork | **the one serious challenger** |
+| Chatterbox Turbo 350M | `chatterbox-turbo` | MIT | ❌ English only | ❌ | ✅ (clip required) | mlx-audio | English live voice only |
+| Chatterbox Nano 110M | `chatterbox-nano` | MIT | ❌ English only | ❌ | ✅ | — | CPU curiosity |
+| IndexTTS-2 1.7B | `indextts2` | bilibili Model Use License | ✅ | ❌ | ✅ | mlx-audio | listen; legal review; heavy |
+| Kokoro 82M | `kokoro` | Apache-2.0 | ✅ | ❌ | ❌ presets | mlx-audio (in use) | already the fallback voice |
+| F5-TTS | `f5` | code MIT, **weights CC-BY-NC-4.0** | ✅ | ❌ | ✅ (transcript helps) | f5-tts-mlx | experiments only |
+| Fish Speech S2-Pro ~5B | `fish` / `fish-server` | **Fish Audio Research License** | ✅ | ✅ | ✅ (transcript required) | torch on MPS | experiments only |
+| VibeVoice Realtime 0.5B | `vibevoice` | MIT | ❌ English only | ❌ | ❌ presets | mlx-audio | English preset voice |
 
-Three corrections to the shortlist as it was presented:
+None of the seven speak **Tamil**. Only Chatterbox multilingual and Fish list **Malay**. The
+Singapore-language question stays where [singlish-voice.md](singlish-voice.md) left it —
+fine-tune, or record.
+
+Three things in the shortlist as presented were wrong and are worth knowing before listening:
 
 - **F5-TTS is not commercially usable as shipped.** Its README: the pre-trained models "are
-  licensed under the CC-BY-NC license due to the training data Emilia". The code is MIT; the
-  weights are not. This repo already dropped `Malaysian-F5-TTS-v3` for exactly this reason
-  ([architecture-research.md](architecture-research.md) §5).
-- **Chatterbox Turbo is English-only**, as is Chatterbox Nano. That is not a three-star
-  multilingual rating; it is zero Mandarin. On a call that opens in 华语 it cannot speak at all,
-  and on an English call that quotes an address to a Mandarin speaker it would need a second
-  model — which is the two-speakers-in-one-call problem most of this repo's voice work exists
-  to prevent.
-- **Fish Speech S2's licence is resolved, not open.** The S2-Pro card: research and
-  non-commercial use at no cost, commercial use only under a separate paid licence from Fish
-  Audio. It is also ~5B parameters — larger than the whole TTS VRAM budget in the plan.
-
-And one thing none of the seven does: **Tamil**. Only Chatterbox multilingual and Fish list
-**Malay**. The Singapore-language question this list was meant to answer is not answered by
-any model on it; it stays where [singlish-voice.md](singlish-voice.md) left it — fine-tune, or
-record.
+  licensed under the CC-BY-NC license due to the training data Emilia". Code MIT, weights not.
+  This repo dropped `Malaysian-F5-TTS-v3` for exactly this ([architecture-research.md](architecture-research.md) §5).
+- **Chatterbox Turbo is English-only**, as are Nano and VibeVoice Realtime. Not a weak
+  multilingual rating — zero Mandarin. On a call that opens in 华语 they cannot speak, and on an
+  English call that quotes an address to a Mandarin speaker they need a second model, which is
+  the two-speakers-in-one-call problem most of this repo's voice work exists to prevent.
+- **Fish Speech S2's licence is resolved, not open.** Research and non-commercial at no cost;
+  commercial use only under a paid licence from Fish Audio. It is also ~5B parameters.
 
 ## Each model, against this product
 
 ### CosyVoice 3 — benchmark it properly
 
-`FunAudioLLM/Fun-CosyVoice3-0.5B-2512`. Apache-2.0 on the card. Chinese, English, Japanese,
-Korean, German, Spanish, French, Italian, Russian, Cantonese and a list of Chinese dialects.
-Zero-shot cloning from a clip; better with the clip's transcript; streaming; vLLM and
-TensorRT-LLM serving paths in the repo. It is also the other model the Singlish fine-tuning
-paper used alongside Chatterbox, with a slightly *better* accent-similarity result
-(0.5771 → 0.6798 against Chatterbox's 0.5114 → 0.6376), which matters because the production
-plan in [singlish-voice.md](singlish-voice.md) is a fine-tune.
+`FunAudioLLM/Fun-CosyVoice3-0.5B-2512`. Apache-2.0. Chinese, English, Japanese, Korean,
+German, Spanish, French, Italian, Russian, Cantonese, a list of Chinese dialects. Zero-shot
+cloning from a clip, better with the clip's transcript; streaming; vLLM and TensorRT-LLM
+serving paths in the repo. It is the other model the Singlish fine-tuning paper used alongside
+Chatterbox, with a slightly *better* accent-similarity gain (0.5771 → 0.6798 against
+0.5114 → 0.6376), which matters because the production plan is a fine-tune.
 
-Why it is the only serious challenger: it is the only model on the list that is commercially
-clean, speaks Mandarin, clones, and streams. Everything the current Chatterbox path relies on,
-it also has.
+It is the only model on the list that is commercially clean, speaks Mandarin, clones and
+streams — everything the current Chatterbox path relies on. Switching would re-render the
+1,701-line cache and re-measure every voice's `target_f0`, so the trial is a benchmark, not a
+config flip.
 
-What it costs to switch: the pre-render cache is keyed on the model, so every one of the
-1,701 lines re-renders, and every voice's `target_f0` was measured from what *Chatterbox*
-lands on and would need re-measuring. Neither is a reason not to try it; both are reasons
-the trial is a benchmark and not a config flip.
-
-Things to know before trusting a first listen:
-
-- It is not on PyPI in a form that installs. The repo is cloned recursively and put on
-  `sys.path`, exactly as its own README does. `scripts/tts_engine_deps.sh cosyvoice3` does this.
-- CosyVoice 3 carries a system prompt (`You are a helpful assistant.<|endofprompt|>`) in front
-  of its text in every one of the repo's examples. The engine adds it; without it the model is
-  being prompted differently from how it was trained.
-- Give it the reference transcript. Put what the clip says in a `.txt` beside the wav
-  (`voices/refs/male.txt`) or in the voice's profile entry as `ref_text`, and the engine takes
-  the zero-shot path rather than the transcript-free one.
-- No Malay. If Malay speech output is ever unblocked, this model does not carry it.
+Details that decide a first listen: it installs from a recursive clone, not PyPI (the deps
+script does this); CosyVoice 3 carries `You are a helpful assistant.<|endofprompt|>` in front
+of its text in every example in the repo, and the engine adds it; give it the reference
+transcript (`voices/refs/male.txt`, or `ref_text` on the voice) to take the zero-shot path.
+No Malay.
 
 ### Chatterbox Turbo — the English fast path, if anything
 
-`ResembleAI/chatterbox-turbo`, MIT, 350M, single-step decoder, built for low-latency agents.
-Takes `[laugh]`, `[chuckle]` and `[cough]` inline. **English only.** A reference clip is
-required. There is a Nano at 110M for CPU.
-
-Where it could fit: as the *live* English voice for improvised lines, where 200 ms matters
-and the cached lines are already Chatterbox multilingual — same family, closer timbre than
-any other pairing. Two cautions. The paralinguistic tags are appealing in a demo and a
-sign-off question on a compliance-approved insurance script: a `[chuckle]` is a change to the
-wording Etiqa approved. And a Mandarin call gets nothing from it, so it can only ever be one
-half of a pair; the English/Mandarin seam then runs between two different models rather than
-two clips of one, and drift across that seam is the thing to measure first.
+`ResembleAI/chatterbox-turbo`, MIT, 350M, single-step decoder. `[laugh]` `[chuckle]` `[cough]`
+inline. English only; a reference clip is required. Could be the *live* English voice for
+improvised lines beside the Chatterbox-multilingual cache — same family, closest timbre. Two
+cautions: the tags are a demo delight and a sign-off question on a compliance-approved script,
+and a Mandarin call gets nothing from it, so the English/Mandarin seam runs between two models.
 
 ### IndexTTS-2 — worth an hour of listening, then a lawyer
 
-`IndexTeam/IndexTTS-2`, 1.7B, Chinese and English, strong speaker similarity and emotion
-control in the published numbers, cloned from a clip. The weights are under the **bilibili
-Model Use License Agreement**: commercial use is permitted unless the licensee exceeds
-100 million monthly active users or RMB 1 billion annual revenue, with attribution and
-downstream-terms obligations, a prohibition on "high-risk" uses that names automated
-decision-making, governing law of the PRC and arbitration in Shanghai. For an insurer's
-customer-facing system that is a legal review, not a footnote. It is also three times the
-size of CosyVoice 3 for a high-concurrency call platform, and it installs from the repository
-with its own checkpoint download.
+`IndexTeam/IndexTTS-2`, 1.7B, Chinese and English, strong similarity and emotion control.
+Weights under the bilibili Model Use License: commercial use permitted below 100M MAU /
+RMB 1bn revenue, attribution and downstream-terms duties, a prohibition on "high-risk" uses
+that names automated decision-making, PRC law, Shanghai arbitration. Three times the size of
+CosyVoice 3.
 
 ### Kokoro 82M — already here, in exactly the role proposed
 
-`hexgrad/Kokoro-82M`, Apache-2.0, ~0.2 s a line, no cloning. It is the live voice in every Mac
-profile and the shipped Mandarin clips (`zm_yunjian`, `zf_xiaobei`) are Kokoro's own speakers.
-The shortlist's placement — cheap fallback, never the premium voice — is the placement it
-already has. The `kokoro` engine puts the same presets behind the GPU sidecar so the fallback
-is available on that box too.
+`hexgrad/Kokoro-82M`, Apache-2.0, ~0.2 s a line, presets only. It is the live voice in every
+Mac profile and the shipped Mandarin clips are Kokoro's own speakers. The `kokoro` engine puts
+the same presets behind the GPU sidecar.
 
-### F5-TTS — for listening, not for shipping
+### F5-TTS — for listening
 
-`SWivid/F5-TTS`. Good quality per parameter, `pip install f5-tts`, Triton/TensorRT-LLM
-deployment with a published 253 ms figure on an L20. English and Chinese. But the base weights
-are CC-BY-NC-4.0, so as shipped it cannot voice a commercial call. The engine exists so the
-quality/cost claim can be heard; `F5_MODEL`/`F5_CKPT` point at a differently licensed
-checkpoint if one is ever trained or bought.
+`SWivid/F5-TTS`, `pip install f5-tts`, English and Chinese, 253 ms on an L20 in its own
+Triton benchmark. CC-BY-NC-4.0 weights. `F5_MODEL`/`F5_CKPT` point at a differently licensed
+checkpoint if one is ever trained or bought. On the Mac, `f5-tts-mlx` is a separate port.
 
-### Fish Speech S2 — same, and heavier
+### Fish Speech S2 — for listening, and heavy
 
-`fishaudio/s2-pro`. 80+ languages, Malay among them, very strong published quality, streaming
-from its own SGLang-based server. Research licence. The `fish` engine forwards to a running
-`fish-speech` `api_server` rather than loading the model itself, because its serving stack is
-its own; it is there to be listened to.
+`fishaudio/s2-pro`, 80+ languages including Malay, streaming from its own server. Research
+licence. Two engines: `fish` runs the model in-process through the same inference engine its
+`api_server` wraps; `fish-server` forwards to a running `api_server` (its SGLang-backed
+recommended path). Both need the reference clip's transcript. It pins its own torch, so it is
+always its own image or venv.
 
-### VibeVoice Realtime — not added
+### VibeVoice Realtime — English preset voice
 
-`microsoft/VibeVoice-Realtime-0.5B`, MIT, ~300 ms to first audio. The card is explicit:
-"intended for English speech only; other languages may produce unpredictable results", and
-voices are preset styles rather than clones of a supplied clip. English-only *and* no cloning
-rules it out twice over for this product, so it has no engine. MLX builds exist under
-`mlx-community/VibeVoice-Realtime-0.5B-*` if anyone wants to hear it on a Mac.
+`microsoft/VibeVoice-Realtime-0.5B`, MIT, ~300 ms to first audio, streaming text in. The card:
+"intended for English speech only; other languages may produce unpredictable results". The
+speaker is one of the shipped `.pt` voice prompts (Carter by default; nine experimental
+languages and eleven English styles via the repo's download script), not a clone of a supplied
+clip. So here it is a preset English voice with more character than Kokoro, and nothing for a
+Mandarin call.
 
-## What was built so they can be tried
+## Running one on the GPU box
 
 Nothing above the TTS seam changed. The console, the call engine, the cache and the CUDA
 backend still speak one contract — `POST /tts` with text, language, reference clip — and every
 candidate is an **engine** behind that contract in the one sidecar.
 
 ```
-scripts/tts_sidecar.py --list-engines
-
-chatterbox        ResembleAI/chatterbox (multilingual v3)       clones=True  langs: ar da de el en es fi fr he hi it ja ko ms nl …
-chatterbox-nano   ResembleAI/chatterbox-nano                    clones=True  langs: en
-chatterbox-turbo  ResembleAI/chatterbox-turbo                   clones=True  langs: en
-cosyvoice3        FunAudioLLM/Fun-CosyVoice3-0.5B-2512          clones=True  langs: de en es fr it ja ko ru yue zh
-f5                F5TTS_v1_Base                                 clones=True  langs: en zh
-fish              fishaudio/s2-pro via api_server               clones=True  langs: any
-indextts2         IndexTeam/IndexTTS-2                          clones=True  langs: en zh
-kokoro            hexgrad/Kokoro-82M                            clones=False langs: en zh
+$ make tts-engines
+chatterbox        ResembleAI/chatterbox (multilingual v3)   clones=True   langs: ar da de … ms … zh
+chatterbox-nano   ResembleAI/chatterbox-nano                clones=True   langs: en
+chatterbox-turbo  ResembleAI/chatterbox-turbo               clones=True   langs: en
+cosyvoice3        FunAudioLLM/Fun-CosyVoice3-0.5B-2512      clones=True   langs: de en es fr it ja ko ru yue zh
+f5                F5TTS_v1_Base                             clones=True   langs: en zh
+fish              checkpoints/s2-pro                        clones=True   langs: any
+fish-server       fishaudio/s2-pro via api_server           clones=True   langs: any
+indextts2         IndexTeam/IndexTTS-2                      clones=True   langs: en zh
+kokoro            hexgrad/Kokoro-82M                        clones=False  langs: en zh
+vibevoice         microsoft/VibeVoice-Realtime-0.5B         clones=False  langs: en
 ```
 
-The rules every engine is held to are the rules the Chatterbox sidecar already had, made
-general:
+The rules every engine is held to are the rules the Chatterbox sidecar already had:
 
-- **A language the engine does not speak is a 400**, naming the engine and what it does
-  speak. Chatterbox Turbo has no language argument at all; handed 就是续保的事 it would read it
-  through the English front-end and return audio of a plausible length. The refusal is the
-  only place that can be caught.
+- **A language the engine does not speak is a 400**, naming the engine and what it speaks.
+  Turbo and VibeVoice have no language argument at all; handed 就是续保的事 they would read it
+  through the English front-end and return audio of a plausible length.
 - **A cloning engine without a clip is a 400**, not the model's default speaker.
-- **An engine that cannot clone says so once** in the log and uses a preset chosen by the
-  line's language — for Mandarin, the same Kokoro speaker the cloning voices copy.
+- **A preset-voice engine says so once** in the log and uses a preset chosen by the line's
+  language — for Mandarin on Kokoro, the same speaker the cloning voices copy.
 - **The reference transcript travels when there is one**: `ref_text` in the request, from the
   voice's profile entry or a `.txt` beside the clip. Chatterbox ignores it; CosyVoice 3 and F5
   clone better for it; Fish refuses without it.
-- `/health` reports `engine`, `model`, `languages` and `clones`, and the console's *Live
-  backend* panel shows the engine the sidecar actually loaded rather than the profile's label.
+- `/health` reports `engine`, `model`, `languages`, `clones`; the console's *Live backend* panel
+  shows the engine the sidecar actually loaded.
 
-### Running one
-
-Each engine has its own dependency set — two of them are git repositories, not packages — so
-there is one image, or one venv, per engine. The default image is unchanged and still tagged
-for Chatterbox.
+Each engine has its own dependency set — four of them are git repositories, Fish pins its own
+torch — so there is one image, or one venv, per engine. The default image is unchanged.
 
 ```bash
-# GPU box, containers: build the trial image and run it BESIDE the default, on its own port
+# containers: build the trial image and run it BESIDE the default, on its own port
 make tts-build TTS_ENGINE=cosyvoice3
 podman run -d --name voicebot-tts-cosy --device nvidia.com/gpu=all \
   -v ./voices:/app/voices:Z -v ~/.cache/huggingface:/root/.cache/huggingface:Z \
   -p 127.0.0.1:8803:8802 localhost/voicebot-tts:cosyvoice3
 
 # or in compose, replacing the default for the whole stack (a trial, not a deploy)
-TTS_ENGINE=cosyvoice3 docker compose up -d --build tts
+TTS_ENGINE=vibevoice docker compose up -d --build tts
 
-# GPU box, bare host: deps into a venv, then the sidecar
-PIP=.venv-tts/bin/pip TTS_ENGINE_PREFIX=$PWD/models ./scripts/tts_engine_deps.sh cosyvoice3
-COSYVOICE_HOME=$PWD/models/CosyVoice .venv-tts/bin/python scripts/tts_sidecar.py --engine cosyvoice3 --port 8803
+# bare host: one venv per engine, then the sidecar on its own port
+uv venv .venv-cosy --python 3.11
+PIP=.venv-cosy/bin/pip TTS_ENGINE_PREFIX=$PWD/models ./scripts/tts_engine_deps.sh cosyvoice3
+COSYVOICE_HOME=$PWD/models/CosyVoice .venv-cosy/bin/python scripts/tts_sidecar.py --engine cosyvoice3 --port 8803
 ```
 
 Beside, not instead: the cache was rendered by Chatterbox, and a trial engine on port 8802
-means every improvised line on every call is a different speaker from the cached lines
-around it. Point the console at a trial engine (`VOICEBOT_TTS_URL`) only on a box nobody is
-dialling from.
+makes every improvised line a different speaker from the cached lines around it. Point the
+console at a trial engine (`VOICEBOT_TTS_URL`) only on a box nobody is dialling from.
 
-Environment the engines read: `TTS_ENGINE`, `COSYVOICE_HOME`, `COSYVOICE_MODEL`,
-`INDEXTTS_HOME`, `INDEXTTS_MODEL`, `F5_MODEL`, `F5_CKPT`, `FISH_URL`, `KOKORO_VOICE_EN`,
-`KOKORO_VOICE_ZH`. Defaults are in the engine classes and in `Dockerfile.tts`.
+Per-engine environment (defaults in the engine classes and `Dockerfile.tts`): `TTS_ENGINE`,
+`COSYVOICE_HOME`, `COSYVOICE_MODEL`, `INDEXTTS_HOME`, `INDEXTTS_MODEL`, `F5_MODEL`, `F5_CKPT`,
+`FISH_HOME`, `FISH_MODEL`, `FISH_DECODER_CONFIG`, `FISH_URL`, `VIBEVOICE_HOME`,
+`VIBEVOICE_MODEL`, `VIBEVOICE_VOICE`, `KOKORO_VOICE_EN`, `KOKORO_VOICE_ZH`.
 
-### On a Mac
+## Running one on the Mac
 
-The MLX path is already model-agnostic: `tts.model` is the live voice and
-`tts.prerender.model` the cached one, both mlx-audio repo ids. Two environment variables now
-override them without editing a profile, and because the model is in the cache key a trial
-renders beside the shipped lines rather than over them:
+This repo is the MacBook build, and the MLX path was already model-agnostic: `tts.model` is
+the live voice, `tts.prerender.model` the cached one, both mlx-audio repo ids. Two environment
+variables now override them without editing a profile, and because the model is in the cache
+key a trial renders beside the shipped lines rather than over them:
 
 ```bash
-VOICEBOT_PRERENDER_MODEL=mlx-community/Fun-CosyVoice3-0.5B-2512-8bit make prerender
+VOICEBOT_PRERENDER_MODEL=mlx-community/IndexTTS-2-fp16 make prerender --voices male
 ```
 
-MLX builds exist for CosyVoice 3 (`mlx-community/Fun-CosyVoice3-0.5B-2512-{fp16,8bit,4bit}`),
-Chatterbox Turbo (`mlx-community/chatterbox-turbo-{fp16,8bit,4bit}`), IndexTTS-2
-(`mlx-community/IndexTTS-2-fp16`) and VibeVoice Realtime; none for F5 or Fish. ⚠ The
-CosyVoice 3 card says it loads through `mlx-audio-plus`, a fork — whether the `mlx-audio`
-this repo pins loads it is **unverified**. Expect to try both.
+What loads where — checked against mlx-audio's model directory and the model cards:
+
+| Model | MLX repo | Loader | Notes |
+|---|---|---|---|
+| Chatterbox multilingual | `mlx-community/chatterbox-multilingual-v3` | mlx-audio (pinned) | in use |
+| Chatterbox Turbo | `mlx-community/chatterbox-turbo-{fp16,8bit,4bit}` | mlx-audio (`chatterbox_turbo`) | cloning; English |
+| IndexTTS-2 | `mlx-community/IndexTTS-2-fp16`, `index-tts2-mlx` | mlx-audio (`indextts`) | cloning |
+| VibeVoice Realtime | `mlx-community/VibeVoice-Realtime-0.5B-{fp16,8bit,4bit}` | mlx-audio (`vibevoice`) | preset `voice=`, English |
+| Kokoro | `mlx-community/Kokoro-82M-{bf16,8bit,4bit}` | mlx-audio | in use; `voice=` + `lang_code` a/z |
+| **CosyVoice 3** | `mlx-community/Fun-CosyVoice3-0.5B-2512-{fp16,8bit,4bit}` | **`mlx-audio-plus`** | a fork that *installs as* `mlx_audio` — separate venv |
+| F5-TTS | `lucasnewman/f5-tts-mlx` | **`f5-tts-mlx`** | its own package and API |
+| Fish Speech S2 | — | the `fish` engine, torch on MPS | its model manager supports `mps`; slow |
+
+The CosyVoice 3 row is the one to be careful with. Upstream mlx-audio has no CosyVoice
+family; the mlx-community builds are read by `mlx-audio-plus`, a fork that removes
+incompatibly-licensed code and adds CosyVoice 2/3, and it installs under the same `mlx_audio`
+import name. Do not put it in the app's venv — it would replace the pinned mlx-audio under the
+live console. A venv of its own, and the benchmark's `--mlx` path pointed at it, is the way:
+
+```bash
+uv venv .venv-cosy-mlx --python 3.11 && uv pip install --python .venv-cosy-mlx/bin/python \
+  mlx-audio-plus fastapi "uvicorn[standard]" pyyaml numpy
+.venv-cosy-mlx/bin/python scripts/tts_bench.py --mlx mlx-community/Fun-CosyVoice3-0.5B-2512-8bit
+```
 
 ## The benchmark
 
-`make tts-bench` renders a fixed sentence set through one or more sidecars and produces a
+`make tts-bench` renders a fixed sentence set through one or more candidates and produces a
 page to listen to and a table of the numbers an ear cannot judge. It is the "Singapore
-insurance benchmark" the shortlist asked for, built from the script rather than written
-fresh, so it measures the product. 78 distinct lines today (50 English, 28 Mandarin) — the
-shortlist said 100–200, and the way to get there is more personas and more coverage answers,
-not more prose:
+insurance benchmark" the shortlist asked for, built from the script rather than written fresh,
+so it measures the product. 78 distinct lines today (50 English, 28 Mandarin):
 
 | group | what is in it |
 |---|---|
@@ -233,20 +225,32 @@ not more prose:
 | `names` `brand` `question` | Mr Tan, Madam Yeo, Mr Ng, Mr Chew · Etiqa · Tiq Home · Tan先生 |
 
 Two modes, because they answer different questions. **Product** (default) sends each line
-through `CUDABackend.synthesize` — the code a live call runs, so identifiers are spelled,
-a mixed line is split by script, and each piece goes in its own language. **`--raw`** sends
-the written line whole, which shows what the model's *own* normalisation does with
-"S$1,284.60" — the thing the deterministic layer in `spoken.py` exists to stop mattering.
+through the live call's own path — identifiers spelled, a mixed line split by script, each
+piece in its own language. **`--raw`** sends the written line whole, which shows what the
+model's *own* normalisation does with "S$1,284.60" — the thing the deterministic layer in
+`spoken.py` exists to stop mattering.
 
 ```bash
+# GPU box: sidecars on their own ports, the same clips to every one
 python scripts/tts_sidecar.py --engine chatterbox --port 8802 &
 python scripts/tts_sidecar.py --engine cosyvoice3 --port 8803 &
-make tts-bench TARGETS="chatterbox=http://127.0.0.1:8802 cosyvoice3=http://127.0.0.1:8803"
+python scripts/tts_sidecar.py --engine vibevoice  --port 8804 &
+make tts-bench TARGETS="chatterbox=http://127.0.0.1:8802 cosyvoice3=http://127.0.0.1:8803 vibevoice=http://127.0.0.1:8804"
 open voices/bench/latest/index.html
 
 # with MERaLiON in the loop, for character error rate against what was said
 make tts-bench TARGETS="..." BENCH_ARGS="--asr-url http://127.0.0.1:8801"
+
+# Mac: mlx-audio models in-process; a preset-voice model names its speaker
+python scripts/tts_bench.py --mlx mlx-community/chatterbox-multilingual-v3 \
+                            --mlx mlx-community/IndexTTS-2-fp16
+python scripts/tts_bench.py --mlx mlx-community/VibeVoice-Realtime-0.5B-8bit --mlx-voice Carter --langs en
+python scripts/tts_bench.py --mlx mlx-community/Kokoro-82M-4bit --mlx-voice am_michael --mlx-lang-codes en=a,zh=z
+python scripts/tts_bench.py --f5-mlx          # F5 through f5-tts-mlx
 ```
+
+An English-only model on the Mandarin lines fails those rows and says why; the failures are
+rows in the table, not a crash. A model that cannot speak a language is a result.
 
 What it measures, against the list the shortlist proposed:
 
@@ -263,17 +267,18 @@ What it measures, against the list the shortlist proposed:
 | Barge-in recovery, streaming stability | not a TTS property — the console's, see [streaming-synthesis.md](streaming-synthesis.md) |
 | Malay, Tamil | no model on the list speaks Tamil; Malay is Chatterbox multilingual and Fish only |
 
-The same reference clips go to every model (`voices/refs/male.wav`, `zm_yunjian.wav` for
-Mandarin, or `--ref-en`/`--ref-zh`). Models run one after another, never interleaved on one
-GPU. The first line of each includes the model's first-use cost, reported rather than hidden.
+Models run one after another, never interleaved on one GPU. The first line of each includes
+the model's first-use cost, reported rather than hidden.
 
-## Recommendation
+## What to run first
 
-Run the benchmark with **Chatterbox multilingual (the incumbent), CosyVoice 3, and Chatterbox
-Turbo on the English half**, with the ASR round-trip on. Listen to the `script` and `names`
-groups first; read the `drift` and `CER` columns second. IndexTTS-2 is worth the same run if
-its licence survives review. F5 and Fish are worth a listen for calibration and cannot ship.
+All of them, once, on the `script` and `names` groups, and listen. Then the full set with the
+ASR round-trip for **Chatterbox multilingual, CosyVoice 3 and IndexTTS-2** — the three that
+speak both languages and clone — reading `drift` and `CER` after the ear has had its say. Turbo
+and VibeVoice on `--langs en` beside them, for how much English latency and character the
+Mandarin requirement costs. F5 and Fish for calibration.
 
-If CosyVoice 3 wins by ear and by number, the switch is a profile change plus `make
-prerender` plus re-measuring `target_f0` per voice — and it puts the production voice on the
-same model the Singlish fine-tuning recipe was published for.
+If CosyVoice 3 wins by ear and by number, the switch is a profile change plus `make prerender`
+plus re-measuring `target_f0` per voice — and it puts the production voice on the same model
+the Singlish fine-tuning recipe was published for. If anything on the non-commercial half wins
+by a margin, that is a licence conversation, not a deployment.

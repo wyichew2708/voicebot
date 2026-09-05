@@ -64,6 +64,13 @@ def main() -> int:
                     help="a running sidecar, e.g. cosyvoice3=http://127.0.0.1:8803")
     ap.add_argument("--mlx", action="append", default=[], metavar="REPO",
                     help="an mlx-audio model to render in-process (Mac); repeatable")
+    ap.add_argument("--mlx-voice", default=None, metavar="NAME",
+                    help="preset speaker for a non-cloning --mlx model (Kokoro: am_michael, "
+                         "VibeVoice: Carter); the reference clips are then not used")
+    ap.add_argument("--mlx-lang-codes", default=None, metavar="en=a,zh=z",
+                    help="what the --mlx model calls each language (Kokoro needs en=a,zh=z)")
+    ap.add_argument("--f5-mlx", action="store_true",
+                    help="F5-TTS through the f5-tts-mlx package, in-process (Mac)")
     ap.add_argument("--langs", nargs="*", default=["en", "zh"])
     ap.add_argument("--groups", nargs="*", default=None,
                     help="only these line groups (script, singlish, money, policy, ...)")
@@ -81,8 +88,11 @@ def main() -> int:
     ap.add_argument("--out", default=None, help=f"default {OUT}/<timestamp>")
     args = ap.parse_args()
 
-    if not args.targets and not args.mlx:
-        ap.error("give at least one NAME=URL sidecar or --mlx REPO")
+    if not args.targets and not args.mlx and not args.f5_mlx:
+        ap.error("give at least one NAME=URL sidecar, --mlx REPO, or --f5-mlx")
+    lang_codes = None
+    if args.mlx_lang_codes:
+        lang_codes = dict(pair.split("=", 1) for pair in args.mlx_lang_codes.split(","))
     refs, texts = _refs(args)
     lines = B.sentences(tuple(args.langs), tuple(args.groups) if args.groups else None)
     if args.limit:
@@ -97,10 +107,13 @@ def main() -> int:
         if not url:
             ap.error(f"target {spec!r} is not NAME=URL")
         targets.append(B.SidecarTarget(name, url, args.sample_rate, refs, texts, raw=args.raw))
+    if args.raw and (args.mlx or args.f5_mlx):
+        ap.error("--raw is for sidecars; the in-process path always uses the spoken layer")
     for repo in args.mlx:
-        if args.raw:
-            ap.error("--raw is for sidecars; the in-process path always uses the spoken layer")
-        targets.append(B.MLXTarget(repo, out / ".mlx-cache", args.sample_rate, refs, texts))
+        targets.append(B.MLXTarget(repo, out / ".mlx-cache", args.sample_rate, refs, texts,
+                                   speaker=args.mlx_voice, lang_codes=lang_codes))
+    if args.f5_mlx:
+        targets.append(B.F5MLXTarget(args.sample_rate, refs, texts))
 
     transcribe = None
     if args.asr_url:

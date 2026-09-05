@@ -217,25 +217,84 @@ class SidecarTarget:
 class MLXTarget:
     """An mlx-audio model rendered in-process, for the Mac. Product mode
     only: it is `PrerenderCache.render` into a scratch cache, which is the
-    same call `make prerender` makes."""
+    same call `make prerender` makes.
+
+    A cloning model takes the reference clips. A preset-voice model
+    (Kokoro, VibeVoice) takes `speaker` instead — the name mlx-audio's
+    `generate(voice=...)` wants — and `lang_codes` maps this repo's `en`/`zh`
+    to whatever the model calls them (`a`/`z` for Kokoro).
+    """
 
     def __init__(self, repo: str, cache_dir: Path, sample_rate: int = 16000,
                  refs: dict[str, str] | None = None,
-                 ref_texts: dict[str, str] | None = None, name: str | None = None) -> None:
+                 ref_texts: dict[str, str] | None = None, name: str | None = None,
+                 speaker: str | None = None,
+                 lang_codes: dict[str, str] | None = None) -> None:
         from .runtime.prerender import PrerenderCache
 
         self.name = name or repo.split("/")[-1]
         self.sample_rate = sample_rate
-        voice: dict[str, Any] = {"ref_audio": dict(refs or DEFAULT_REFS)}
-        if ref_texts:
+        voice: dict[str, Any] = ({"speaker": speaker} if speaker
+                                 else {"ref_audio": dict(refs or DEFAULT_REFS)})
+        if ref_texts and not speaker:
             voice["ref_text"] = dict(ref_texts)
-        self._cache = PrerenderCache({"model": repo, "cache_dir": str(cache_dir),
-                                      "voices": {"bench": voice},
-                                      "default_voice": "bench"}, sample_rate)
+        cfg: dict[str, Any] = {"model": repo, "cache_dir": str(cache_dir),
+                               "voices": {"bench": voice}, "default_voice": "bench"}
+        if lang_codes:
+            cfg["lang_codes"] = dict(lang_codes)
+        self._cache = PrerenderCache(cfg, sample_rate)
 
     async def render(self, line: Line) -> bytes:
         got = await asyncio.to_thread(self._cache.render, line.text, line.lang, "bench", 1)
         return got or b""
+
+
+class F5MLXTarget:
+    """F5-TTS on a Mac through the `f5-tts-mlx` package, which is its own
+    port rather than an mlx-audio family. Product mode: the line is split by
+    script the way a call splits it, each piece cloned from that language's
+    clip. `generate` returns 24 kHz float audio; it is resampled here."""
+
+    def __init__(self, sample_rate: int = 16000, refs: dict[str, str] | None = None,
+                 ref_texts: dict[str, str] | None = None, name: str = "f5-tts-mlx",
+                 model_name: str = "lucasnewman/f5-tts-mlx") -> None:
+        self.name = name
+        self.sample_rate = sample_rate
+        self.refs = dict(refs or DEFAULT_REFS)
+        self.ref_texts = dict(ref_texts or {})
+        self.model_name = model_name
+
+    def _piece(self, text: str, lang: str) -> bytes:
+        import numpy as np
+        from f5_tts_mlx.generate import generate
+
+        ref = self.refs.get(lang) or self.refs.get("en")
+        audio = generate(generation_text=text, model_name=self.model_name,
+                         ref_audio_path=ref, ref_audio_text=self.ref_texts.get(lang))
+        audio = np.asarray(audio, dtype=np.float32).squeeze()
+        src = 24000
+        if src != self.sample_rate and len(audio) > 1:
+            n = int(len(audio) * self.sample_rate / src)
+            audio = np.interp(np.linspace(0, len(audio) - 1, n),
+                              np.arange(len(audio)), audio).astype(np.float32)
+        return (np.clip(audio, -1, 1) * 32767).astype("<i2").tobytes()
+
+    async def render(self, line: Line) -> bytes:
+        pieces = segment_by_script(line.text, line.lang)
+
+        def _work() -> bytes:
+            out = bytearray()
+            for i, (piece, lang) in enumerate(pieces):
+                part = self._piece(piece, lang)
+                if len(pieces) > 1:
+                    part = P.trim(part, head=(i > 0), tail=(i < len(pieces) - 1),
+                                  keep_ms=10, sample_rate=self.sample_rate)
+                    if i:
+                        out += P.silence(40, self.sample_rate)
+                out += part
+            return bytes(out)
+
+        return await asyncio.to_thread(_work)
 
 
 # ------------------------------------------------------------------ metrics

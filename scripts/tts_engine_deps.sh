@@ -60,14 +60,40 @@ case "$ENGINE" in
     $PIP install --no-cache-dir torch kokoro "misaki[en,zh]" espeakng-loader "${common[@]}"
     ;;
   fish)
-    # Research licence. The model runs in fish-speech's own api_server; this
-    # sidecar only forwards to it, so all it needs is the wire format.
+    # Research licence. Installed from the repository, which pins its own
+    # torch (2.8.0) — the reason this is one image on its own. The S2-Pro
+    # checkpoint (~10 GB) lands where its api_server expects it.
+    if [ ! -d "$PREFIX/fish-speech" ]; then
+      git clone --depth 1 https://github.com/fishaudio/fish-speech.git "$PREFIX/fish-speech"
+    fi
+    $PIP install --no-cache-dir -e "$PREFIX/fish-speech[${FISH_EXTRA:-cu129}]" "${common[@]}"
+    $PIP install --no-cache-dir "huggingface_hub[cli]"
+    hf download "${FISH_REPO:-fishaudio/s2-pro}" --local-dir "$PREFIX/fish-speech/checkpoints/s2-pro"
+    echo "    set FISH_HOME=$PREFIX/fish-speech for the sidecar"
+    ;;
+  fish-server)
+    # The model runs in fish-speech's own api_server; this sidecar only
+    # forwards to it, so all it needs is the wire format.
     $PIP install --no-cache-dir ormsgpack "${common[@]}"
     echo "    run fish-speech's api_server separately and set FISH_URL"
     ;;
+  vibevoice)
+    # MIT, English only, preset voices. Installed from the repository with
+    # its streaming extra; the voice prompts (.pt) ship inside the clone.
+    if [ ! -d "$PREFIX/VibeVoice" ]; then
+      git clone --depth 1 https://github.com/microsoft/VibeVoice.git "$PREFIX/VibeVoice"
+    fi
+    $PIP install --no-cache-dir torch "${common[@]}"
+    $PIP install --no-cache-dir -e "$PREFIX/VibeVoice[streamingtts]"
+    # flash-attn is what the authors tested; the sidecar falls back to sdpa
+    # if this fails to build on the host.
+    $PIP install --no-cache-dir flash-attn --no-build-isolation || \
+      echo "    flash-attn did not build; the sidecar will use sdpa"
+    echo "    set VIBEVOICE_HOME=$PREFIX/VibeVoice for the sidecar"
+    ;;
   *)
     echo "unknown TTS engine: $ENGINE" >&2
-    echo "one of: chatterbox chatterbox-turbo chatterbox-nano cosyvoice3 f5 indextts2 kokoro fish" >&2
+    echo "one of: chatterbox chatterbox-turbo chatterbox-nano cosyvoice3 f5 indextts2 kokoro fish fish-server vibevoice" >&2
     exit 2
     ;;
 esac

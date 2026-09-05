@@ -113,9 +113,119 @@ def test_the_default_engine_is_the_one_the_cache_was_rendered_with(monkeypatch):
 
 
 def test_every_candidate_in_the_shortlist_has_an_engine():
+    """All seven proposed, plus the incumbent: CosyVoice 3, Fish Speech S2,
+    Chatterbox Turbo, F5-TTS, IndexTTS 2, Kokoro, VibeVoice Realtime."""
     mod = _sidecar()
     assert {"chatterbox", "chatterbox-turbo", "cosyvoice3", "f5", "indextts2",
-            "kokoro", "fish"} <= set(mod.ENGINES)
+            "kokoro", "fish", "fish-server", "vibevoice"} <= set(mod.ENGINES)
+
+
+def test_fish_in_process_takes_the_transcript_and_the_final_chunk(monkeypatch, tmp_path):
+    """Fish's engine yields header, segments and a final; only the final is
+    the whole line. And it will not clone without the transcript — a 400,
+    not a random voice."""
+    mod = _sidecar()
+    seen: list = []
+
+    class _Result:
+        def __init__(self, code, audio=None, error=None):
+            self.code, self.audio, self.error = code, audio, error
+
+    class _FishEngine:
+        def inference(self, req):
+            seen.append(req)
+            yield _Result("header", (44100, np.zeros(44, dtype=np.float32)))
+            yield _Result("segment", (44100, np.zeros(441, dtype=np.float32)))
+            yield _Result("final", (44100, np.zeros(4410, dtype=np.float32)))
+
+    class _Ref:
+        def __init__(self, audio, text): self.audio, self.text = audio, text
+
+    class _Req:
+        def __init__(self, text, references, format, streaming):
+            self.text, self.references = text, references
+
+    monkeypatch.setitem(sys.modules, "fish_speech", types.SimpleNamespace())
+    monkeypatch.setitem(sys.modules, "fish_speech.utils", types.SimpleNamespace())
+    monkeypatch.setitem(sys.modules, "fish_speech.utils.schema",
+                        types.SimpleNamespace(ServeReferenceAudio=_Ref, ServeTTSRequest=_Req))
+    from fastapi.testclient import TestClient
+    monkeypatch.setitem(mod._state, "m", _FishEngine())
+    monkeypatch.setitem(mod._state, "dev", "cpu")
+    monkeypatch.setitem(mod._state, "engine_name", "fish")
+    c = TestClient(mod.app)
+    clip = tmp_path / "ref.wav"
+    clip.write_bytes(b"RIFF....")
+
+    r = c.post("/tts", json={"text": "Selamat petang.", "lang": "ms", "voice": "male",
+                             "ref_audio": str(clip)})
+    assert r.status_code == 400 and "transcript" in r.text
+    assert not seen
+
+    r = c.post("/tts", json={"text": "Selamat petang.", "lang": "ms", "voice": "male",
+                             "ref_audio": str(clip), "ref_text": "Selamat pagi."})
+    assert r.status_code == 200, r.text
+    assert seen[0].references[0].text == "Selamat pagi."
+    assert seen[0].references[0].audio == b"RIFF...."
+    with wave.open(io.BytesIO(r.content)) as w:      # the final chunk, resampled
+        assert w.getframerate() == 16000 and w.getnframes() == 1600
+
+
+def test_vibevoice_is_a_preset_english_voice(monkeypatch, tmp_path):
+    """No cloning and no Mandarin: the clip is ignored, Mandarin is a 400,
+    and the text goes through the processor with the cached voice prompt
+    exactly as the authors' own inference script does."""
+    mod = _sidecar()
+    calls: list = []
+
+    class _Tensor(_FakeTensor):
+        def float(self): return self
+
+    class _Processor:
+        tokenizer = object()
+
+        def process_input_with_cached_prompt(self, text, cached_prompt, **kw):
+            calls.append(("process", text, cached_prompt))
+            return {"tts_text_ids": _FakeTensor(np.zeros(3))}
+
+    class _Model:
+        def generate(self, **kw):
+            calls.append(("generate", kw))
+            return types.SimpleNamespace(speech_outputs=[_Tensor(np.zeros(4800, dtype=np.float32))])
+
+    monkeypatch.setitem(sys.modules, "torch",
+                        types.SimpleNamespace(is_tensor=lambda v: False))
+    from fastapi.testclient import TestClient
+    monkeypatch.setitem(mod._state, "m", {"model": _Model(), "processor": _Processor(),
+                                          "prompt": {"voice": "Carter"}, "device": "cpu",
+                                          "voice": "Carter.pt"})
+    monkeypatch.setitem(mod._state, "dev", "cpu")
+    monkeypatch.setitem(mod._state, "engine_name", "vibevoice")
+    c = TestClient(mod.app)
+
+    r = c.post("/tts", json={"text": "就是续保的事。", "lang": "zh", "voice": "male"})
+    assert r.status_code == 400 and "vibevoice" in r.text
+    r = c.post("/tts", json={"text": "No problem [chuckle].", "lang": "en", "voice": "male",
+                             "ref_audio": "voices/refs/male.wav"})
+    assert r.status_code == 200, r.text
+    assert calls[0] == ("process", "No problem [chuckle].", {"voice": "Carter"})
+    kw = calls[1][1]
+    assert kw["cfg_scale"] == mod.VibeVoice.CFG_SCALE and kw["all_prefilled_outputs"] == {"voice": "Carter"}
+    assert kw["all_prefilled_outputs"] is not mod._state["m"]["prompt"], "a copy per line"
+    with wave.open(io.BytesIO(r.content)) as w:      # 24 kHz in, 16 kHz out
+        assert w.getframerate() == 16000 and w.getnframes() == 3200
+    h = c.get("/health").json()
+    assert h["clones"] is False and h["languages"] == ["en"]
+
+
+def test_vibevoice_finds_its_presets_in_the_clone(tmp_path):
+    mod = _sidecar()
+    d = tmp_path / "demo" / "voices" / "streaming_model" / "en"
+    d.mkdir(parents=True)
+    (d / "Carter.pt").write_bytes(b"x")
+    (d / "Emma.pt").write_bytes(b"x")
+    assert list(mod.VibeVoice.presets(str(tmp_path))) == ["Carter", "Emma"]
+    assert mod.VibeVoice.presets(str(tmp_path / "nowhere")) == {}
 
 
 def test_an_unknown_engine_is_refused_by_name(monkeypatch):

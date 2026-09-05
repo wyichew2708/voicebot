@@ -333,11 +333,73 @@ class Kokoro(Engine):
 
 
 class Fish(Engine):
-    """Fish Speech S2 (fishaudio/s2-pro), reached over HTTP: the model runs in
-    fish-speech's own `tools/api_server.py`, which this forwards to. Research
-    licence — commercial use needs a paid licence from Fish Audio — so this
-    is for listening, not for shipping."""
+    """Fish Speech S2 (fishaudio/s2-pro) in-process, through the same
+    inference engine its own api_server wraps: a text-to-semantic model on a
+    worker thread and the DAC decoder. ~5B parameters, 80+ languages, needs
+    the clip's transcript to clone. Research licence — for experiments.
+
+    Installed from the repository (it pins its own torch), which is why it is
+    one image on its own. FISH_HOME is the clone, FISH_MODEL the checkpoint
+    directory holding the model files and codec.pth.
+    """
     name = "fish"
+    model_id = os.environ.get("FISH_MODEL", "checkpoints/s2-pro")
+    languages = None
+    needs = ("git clone https://github.com/fishaudio/fish-speech $FISH_HOME && "
+             "pip install -e '$FISH_HOME[cu129]' && hf download fishaudio/s2-pro "
+             "--local-dir $FISH_HOME/checkpoints/s2-pro")
+
+    def load(self, device: str) -> None:            # pragma: no cover - model
+        import torch
+        home = os.environ.get("FISH_HOME", "/opt/fish-speech")
+        if home not in sys.path:
+            sys.path.insert(0, home)
+        from fish_speech.inference_engine import TTSInferenceEngine
+        from fish_speech.models.dac.inference import load_model as load_decoder
+        from fish_speech.models.text2semantic.inference import launch_thread_safe_queue
+        ckpt = self.model_id
+        if not os.path.isabs(ckpt) and not os.path.isdir(ckpt):
+            ckpt = os.path.join(home, ckpt)
+        precision = torch.bfloat16 if device == "cuda" else torch.float32
+        llama = launch_thread_safe_queue(checkpoint_path=ckpt, device=device,
+                                         precision=precision, compile=False)
+        decoder = load_decoder(config_name=os.environ.get("FISH_DECODER_CONFIG", "modded_dac_vq"),
+                               checkpoint_path=os.path.join(ckpt, "codec.pth"), device=device)
+        _state["m"] = TTSInferenceEngine(llama_queue=llama, decoder_model=decoder,
+                                         precision=precision, compile=False)
+
+    def _request(self, text: str, ref: Path | None, ref_text: str | None):
+        from fish_speech.utils.schema import ServeReferenceAudio, ServeTTSRequest
+        refs = []
+        if ref is not None:
+            if not ref_text:
+                raise Unsupported(f"{self.name} needs the reference clip's transcript "
+                                  "(ref_text, or a .txt beside the clip)")
+            refs.append(ServeReferenceAudio(audio=ref.read_bytes(), text=ref_text))
+        return ServeTTSRequest(text=text, references=refs, format="wav", streaming=False)
+
+    def synth(self, text, lang, ref, ref_text):
+        import numpy as np
+        if ref is None:
+            raise Unsupported(f"{self.name} clones from a reference clip and none was given")
+        engine = _state["m"]
+        final = None
+        for result in engine.inference(self._request(text, ref, ref_text)):
+            if result.code == "error":
+                raise RuntimeError(f"fish-speech: {result.error}")
+            if result.code == "final":
+                final = result.audio
+        if final is None:
+            raise RuntimeError("fish-speech produced no audio")
+        sr, audio = final
+        return np.asarray(audio, dtype=np.float32).squeeze(), int(sr)
+
+
+class FishServer(Engine):
+    """Fish Speech reached over HTTP: the model runs in fish-speech's own
+    `tools/api_server.py` (its recommended serving path, SGLang-backed), and
+    this forwards to it. Same rules as the in-process engine."""
+    name = "fish-server"
     model_id = "fishaudio/s2-pro via api_server"
     languages = None
     needs = ("pip install ormsgpack; run fish-speech's api_server and set FISH_URL "
@@ -377,9 +439,97 @@ class Fish(Engine):
         return pcm.astype(np.float32) / 32768.0, sr
 
 
+class VibeVoice(Engine):
+    """Microsoft VibeVoice-Realtime-0.5B. MIT, ~300 ms to first audio,
+    streaming text in. English only, and the speaker is one of the shipped
+    preset `.pt` prompts rather than a clone of a supplied clip — so on this
+    product it is a preset English voice, like Kokoro with more character.
+
+    Installed from the repository with its `streamingtts` extra; the voice
+    presets live in the clone under demo/voices/streaming_model. VIBEVOICE_HOME
+    is the clone, VIBEVOICE_MODEL the HF repo or local path, VIBEVOICE_VOICE
+    the preset name (default Carter).
+    """
+    name = "vibevoice"
+    model_id = os.environ.get("VIBEVOICE_MODEL", "microsoft/VibeVoice-Realtime-0.5B")
+    languages = frozenset({"en"})
+    clones = False
+    needs = ("git clone https://github.com/microsoft/VibeVoice $VIBEVOICE_HOME && "
+             "pip install -e '$VIBEVOICE_HOME[streamingtts]'")
+    CFG_SCALE = 1.5
+
+    @staticmethod
+    def presets(home: str) -> dict[str, str]:
+        """The shipped voice prompts, by name."""
+        import glob
+        found = glob.glob(os.path.join(home, "demo", "voices", "streaming_model",
+                                       "**", "*.pt"), recursive=True)
+        return {os.path.splitext(os.path.basename(p))[0]: p for p in sorted(found)}
+
+    def load(self, device: str) -> None:            # pragma: no cover - model
+        import torch
+        from transformers.cache_utils import DynamicCache
+        from transformers.modeling_outputs import BaseModelOutputWithPast
+        from vibevoice.modular.modeling_vibevoice_streaming_inference import (
+            VibeVoiceStreamingForConditionalGenerationInference as Model)
+        from vibevoice.processor.vibevoice_streaming_processor import (
+            VibeVoiceStreamingProcessor)
+
+        home = os.environ.get("VIBEVOICE_HOME", "/opt/VibeVoice")
+        presets = self.presets(home)
+        if not presets:
+            raise RuntimeError(f"no VibeVoice voice presets under {home}/demo/voices/"
+                               "streaming_model — VIBEVOICE_HOME must point at the clone")
+        want = os.environ.get("VIBEVOICE_VOICE", "Carter")
+        preset = presets.get(want) or next(iter(presets.values()))
+        if want not in presets:
+            log.warning("no VibeVoice preset %r; using %s (have: %s)", want,
+                        os.path.basename(preset), ", ".join(presets))
+
+        processor = VibeVoiceStreamingProcessor.from_pretrained(self.model_id)
+        dtype = torch.bfloat16 if device == "cuda" else torch.float32
+        try:
+            model = Model.from_pretrained(
+                self.model_id, torch_dtype=dtype, device_map=device,
+                attn_implementation="flash_attention_2" if device == "cuda" else "sdpa")
+        except Exception as exc:
+            if device != "cuda":
+                raise
+            log.warning("flash_attention_2 unavailable (%s); falling back to sdpa, "
+                        "which the authors say is less tested", exc)
+            model = Model.from_pretrained(self.model_id, torch_dtype=dtype,
+                                          device_map=device, attn_implementation="sdpa")
+        model.eval()
+        model.set_ddpm_inference_steps(num_steps=5)
+        with torch.serialization.safe_globals([BaseModelOutputWithPast, DynamicCache]):
+            prompt = torch.load(preset, map_location=device, weights_only=True)
+        _state["m"] = {"model": model, "processor": processor, "prompt": prompt,
+                       "device": device, "voice": os.path.basename(preset)}
+
+    def synth(self, text, lang, ref, ref_text):
+        import copy
+        import torch
+        m = _state["m"]
+        model, processor, prompt = m["model"], m["processor"], m["prompt"]
+        inputs = processor.process_input_with_cached_prompt(
+            text=text, cached_prompt=prompt, padding=True,
+            return_tensors="pt", return_attention_mask=True)
+        for k, v in list(inputs.items()):
+            if torch.is_tensor(v):
+                inputs[k] = v.to(m["device"])
+        out = model.generate(**inputs, max_new_tokens=None, cfg_scale=self.CFG_SCALE,
+                             tokenizer=processor.tokenizer,
+                             generation_config={"do_sample": False}, verbose=False,
+                             all_prefilled_outputs=copy.deepcopy(prompt))
+        speech = out.speech_outputs[0] if getattr(out, "speech_outputs", None) else None
+        if speech is None:
+            raise RuntimeError("VibeVoice produced no audio")
+        return _tensor_audio(speech.float() if hasattr(speech, "float") else speech), 24000
+
+
 ENGINES: dict[str, type[Engine]] = {
     e.name: e for e in (Chatterbox, ChatterboxTurbo, ChatterboxNano, CosyVoice3,
-                        F5, IndexTTS2, Kokoro, Fish)}
+                        F5, IndexTTS2, Kokoro, Fish, FishServer, VibeVoice)}
 
 
 # ------------------------------------------------------------------- serving

@@ -128,6 +128,7 @@ tts-deps:             ## install one engine's dependencies into this venv:  make
 
 tts-sidecar:          ## run the sidecar here with one engine:  make tts-sidecar TTS_ENGINE=cosyvoice3 TTS_PORT=8803
 	COSYVOICE_HOME=$(CURDIR)/models/CosyVoice INDEXTTS_HOME=$(CURDIR)/models/index-tts \
+	FISH_HOME=$(CURDIR)/models/fish-speech VIBEVOICE_HOME=$(CURDIR)/models/VibeVoice \
 	$(PY) scripts/tts_sidecar.py --engine $(TTS_ENGINE) --port $(TTS_PORT)
 
 tts-build:            ## build the GPU sidecar image for one engine:  make tts-build TTS_ENGINE=cosyvoice3

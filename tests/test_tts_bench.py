@@ -208,6 +208,51 @@ def test_raw_mode_sends_the_written_line_whole(stub):
     assert S.bodies[0]["ref_text"] == "Good afternoon, this is Michael."
 
 
+def test_an_mlx_preset_voice_model_is_given_a_speaker_not_a_clip(tmp_path):
+    """Kokoro and VibeVoice on mlx-audio take `voice=NAME` and, for Kokoro,
+    their own language codes. Handing them a reference clip is at best
+    ignored and at worst a TypeError three calls deep."""
+    t = B.MLXTarget("mlx-community/Kokoro-82M-4bit", tmp_path, speaker="am_michael",
+                    lang_codes={"en": "a", "zh": "z"})
+    cache = t._cache
+    assert cache.speaker_for("bench") == "am_michael"
+    assert cache.reference_for("bench", "en") is None
+    assert cache.lang_code("zh") == "z" and cache.lang_code("en") == "a"
+    # And a cloning model keeps the clips, per language.
+    t = B.MLXTarget("mlx-community/chatterbox-multilingual-v3", tmp_path,
+                    ref_texts={"en": "Hello."})
+    assert t._cache.reference_for("bench", "zh") == "voices/refs/zm_yunjian.wav"
+    assert t._cache.reference_text_for("bench", "en") == "Hello."
+    assert t._cache.lang_code("zh") == "zh"
+
+
+def test_f5_on_mlx_renders_each_script_run_from_its_own_clip(monkeypatch, tmp_path):
+    """The Mandarin address line is two runs; f5-tts-mlx is called once per
+    run with that language's clip and transcript, and the result comes back
+    at the bench's rate."""
+    import sys
+    import types
+
+    calls: list = []
+
+    def fake_generate(generation_text, model_name, ref_audio_path, ref_audio_text, **kw):
+        import numpy as np
+        calls.append((generation_text, ref_audio_path, ref_audio_text))
+        return np.zeros(24000, dtype=np.float32)          # one second at 24 kHz
+
+    monkeypatch.setitem(sys.modules, "f5_tts_mlx", types.SimpleNamespace())
+    monkeypatch.setitem(sys.modules, "f5_tts_mlx.generate",
+                        types.SimpleNamespace(generate=fake_generate))
+    line = next(l for l in B.sentences(("zh",), ("address",)))
+    t = B.F5MLXTarget(ref_texts={"zh": "中文参考。", "en": "English reference."})
+    pcm = asyncio.run(t.render(line))
+    langs = [ref for _, ref, _ in calls]
+    assert "voices/refs/zm_yunjian.wav" in langs and "voices/refs/male.wav" in langs
+    assert any(t == "English reference." for _, _, t in calls)
+    assert any("Jurong West Street 4" in text for text, _, _ in calls)
+    assert len(pcm) >= 2 * 16000 * len(calls) * 0.9   # joined, resampled to 16 kHz
+
+
 def test_a_model_that_fails_a_line_is_a_row_not_a_crash(tmp_path):
     class _Broken:
         name = "broken"

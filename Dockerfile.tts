@@ -20,7 +20,9 @@ WORKDIR /app
 ENV PYTHONUNBUFFERED=1 \
     TTS_ENGINE=${TTS_ENGINE} \
     COSYVOICE_HOME=/opt/CosyVoice \
-    INDEXTTS_HOME=/opt/index-tts
+    INDEXTTS_HOME=/opt/index-tts \
+    FISH_HOME=/opt/fish-speech \
+    VIBEVOICE_HOME=/opt/VibeVoice
 
 COPY scripts/tts_engine_deps.sh ./scripts/
 RUN chmod +x scripts/tts_engine_deps.sh && ./scripts/tts_engine_deps.sh "${TTS_ENGINE}"
