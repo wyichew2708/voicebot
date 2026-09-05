@@ -164,19 +164,23 @@ class CUDABackend(Backend):
                       latency_ms=int((time.perf_counter() - t0) * 1000))
 
     def _speak_one(self, piece: str, lang_code: str, voice: str,
-                   ref: str | None = None) -> bytes:
+                   ref: str | None = None, ref_text: str | None = None) -> bytes:
         """One fragment, one language, from the sidecar.
 
         The reference clip travels with the request. The sidecar used to keep
         a two-entry table of its own, so every other voice — and every
         Mandarin line, which clones a different clip from the English one —
         fell back to the model's default speaker without a word of complaint.
+        The clip's transcript travels too when the profile has one: the
+        engines that want it clone better for it, and the default ignores it.
         """
         url = self.cfg.get("tts", {}).get("base_url", "").rstrip("/") + "/tts"
         body: dict[str, Any] = {"text": piece, "lang": lang_code, "voice": voice,
                                 "sample_rate": self.sample_rate}
         if ref:
             body["ref_audio"] = ref
+        if ref_text:
+            body["ref_text"] = ref_text
         raw = self._post(url, json.dumps(body).encode(), "application/json")
         with wave.open(io.BytesIO(raw)) as w:
             if w.getframerate() != self.sample_rate:
@@ -202,12 +206,13 @@ class CUDABackend(Backend):
         # inside a Mandarin sentence is read by the Mandarin speaker, as it is
         # in the cache, rather than by a second voice at the seam.
         ref = self.prerender.reference_for(voice, lang)
+        ref_text = self.prerender.reference_text_for(voice, lang)
 
         def _work() -> bytes:
             out = bytearray()
             for i, (piece, piece_lang) in enumerate(pieces):
                 part = self._speak_one(piece, self.prerender.lang_code(piece_lang),
-                                       voice, ref)
+                                       voice, ref, ref_text)
                 if len(pieces) > 1:
                     part = P.trim(part, head=(i > 0), tail=(i < len(pieces) - 1),
                                   keep_ms=10, sample_rate=self.sample_rate)
@@ -260,20 +265,48 @@ class CUDABackend(Backend):
         llm_cfg = self.cfg.get("llm", {})
         asr_up = probe(asr_cfg.get("base_url", ""), asr_cfg.get("model"))
         llm_up = probe(llm_cfg.get("base_url", ""), llm_cfg.get("model"))
-        tts_up = probe(self.cfg.get("tts", {}).get("base_url", ""))
+        tts_info = self._sidecar_health()
+        tts_up = tts_info is not None
         detail = ", ".join(n for n, ok in
                            (("asr", asr_up), ("llm", llm_up), ("tts", tts_up)) if not ok)
+        # The sidecar says which engine it is running. Shown in preference to
+        # the profile's label, because with a trial engine on the port the
+        # two differ, and the console should say what is actually speaking.
+        tts_label = (tts_info or {}).get("engine") or \
+            self.cfg.get("tts", {}).get("model", "?").split("/")[-1]
         return BackendHealth(
             profile="cuda",
             asr=self.cfg.get("asr", {}).get("model", "?").split("/")[-1],
             llm=self.cfg.get("llm", {}).get("model", "?").split("/")[-1],
-            tts=(self.cfg.get("tts", {}).get("model", "?").split("/")[-1]
-                 + " + prerender cache"),
+            tts=tts_label + " + prerender cache",
             # The cache covers the scripted turns, so ASR is the only hard
             # dependency for a call to start.
             ready=asr_up,
             detail=("unreachable: " + detail) if detail else "",
         )
+
+    def _sidecar_health(self) -> dict[str, Any] | None:
+        """What the TTS sidecar says about itself, or None if it is not up.
+
+        `{"ready", "engine", "model", "languages", "clones"}` from
+        scripts/tts_sidecar.py. An older sidecar answers with less; a 200 with
+        any body still counts as up.
+        """
+        url = self.cfg.get("tts", {}).get("base_url", "").rstrip("/")
+        if not url:
+            return None
+        try:
+            with urllib.request.urlopen(url + "/health", timeout=3) as r:
+                if not 200 <= r.status < 300:
+                    return None
+                raw = r.read()
+        except Exception:
+            return None
+        try:
+            info = json.loads(raw)
+        except ValueError:
+            return {}
+        return info if isinstance(info, dict) else {}
 
     def close(self) -> None:
         self._pool.shutdown(wait=False)

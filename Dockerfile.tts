@@ -1,14 +1,29 @@
 # TTS sidecar. Only improvised lines reach this — the seven scripted turns are
 # served from the pre-rendered cache — so it is on the critical path for
 # unscripted replies only.
+#
+# One image per engine. The candidates do not share a dependency set, so the
+# engine is a build argument and scripts/tts_engine_deps.sh installs what that
+# one needs:
+#
+#     docker build -f Dockerfile.tts -t voicebot-tts:chatterbox .
+#     docker build -f Dockerfile.tts --build-arg TTS_ENGINE=cosyvoice3 -t voicebot-tts:cosyvoice3 .
+#
+# The default stays Chatterbox multilingual: the same checkpoint the cache was
+# rendered with, so a live line and a cached one sound like one speaker.
+ARG TTS_ENGINE=chatterbox
 FROM nvidia/cuda:12.4.0-runtime-ubi9
+ARG TTS_ENGINE
 
-RUN dnf install -y python3.11 python3.11-pip && dnf clean all
+RUN dnf install -y python3.11 python3.11-pip git && dnf clean all
 WORKDIR /app
-ENV PYTHONUNBUFFERED=1
+ENV PYTHONUNBUFFERED=1 \
+    TTS_ENGINE=${TTS_ENGINE} \
+    COSYVOICE_HOME=/opt/CosyVoice \
+    INDEXTTS_HOME=/opt/index-tts
 
-RUN python3.11 -m pip install --no-cache-dir \
-      torch torchaudio chatterbox-tts fastapi "uvicorn[standard]" numpy
+COPY scripts/tts_engine_deps.sh ./scripts/
+RUN chmod +x scripts/tts_engine_deps.sh && ./scripts/tts_engine_deps.sh "${TTS_ENGINE}"
 
 COPY scripts/tts_sidecar.py ./scripts/
 VOLUME ["/app/voices"]

@@ -119,6 +119,17 @@ class PrerenderCache:
         """
         return for_language(self._entry(voice).get("ref_audio"), lang)
 
+    def reference_text_for(self, voice: str | None = None,
+                           lang: str | None = None) -> str | None:
+        """What is said on the reference clip, where the profile records it.
+
+        Chatterbox never asked. CosyVoice 3 and F5-TTS clone measurably
+        better when told, and Fish will not clone without it — so a voice
+        may carry `ref_text`, per language like the clip itself. Absent for
+        every shipped voice, which keeps every existing cache key as it is.
+        """
+        return for_language(self._entry(voice).get("ref_text"), lang) or None
+
     def target_f0(self, voice: str | None = None, lang: str | None = None) -> float:
         """Pitch every line of this voice is normalised to, in Hz. 0 disables.
 
@@ -192,6 +203,10 @@ class PrerenderCache:
         rate = self.rate_for(voice, lang)
         if abs(rate - 1.0) > 1e-6:
             parts.append(f"rate={rate:.3f}")
+        # Same rule: only a voice that carries a transcript changes its key.
+        ref_text = self.reference_text_for(voice, lang)
+        if ref_text:
+            parts.append(f"ref_text={ref_text}")
         parts.append(text)
         return hashlib.sha256("\x00".join(parts).encode()).hexdigest()[:32]
 
@@ -280,6 +295,9 @@ class PrerenderCache:
         speaker = self.speaker_for(voice)
         if ref:
             kwargs["ref_audio"] = ref          # cloning: anchored to a file
+            ref_text = self.reference_text_for(voice, lang)
+            if ref_text:
+                kwargs["ref_text"] = ref_text  # only for a voice that has one
         elif speaker:
             kwargs["voice"] = speaker          # CustomVoice: fixed identity
         else:

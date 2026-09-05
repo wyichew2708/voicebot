@@ -590,6 +590,28 @@ wrong when they diverge, and none of them raises an error:
   somewhere other than the voice's own median — audible as the speaker changing between a scripted
   turn and an improvised one, in the middle of a sentence.
 
+### Trying another TTS model
+
+The sidecar serves one **engine** per process behind the same `/tts` contract: Chatterbox
+multilingual (default — the checkpoint the cache was rendered with), Chatterbox Turbo,
+CosyVoice 3, F5-TTS, IndexTTS-2, Kokoro, or a Fish Speech server. Pick one with `TTS_ENGINE`
+(compose, `services.sh`) or `--engine`; each has its own image because they do not share
+dependencies. A language the engine cannot speak is a 400, not English-sounding nonsense.
+
+```bash
+make tts-engines                                      # what is available and what each speaks
+make tts-build TTS_ENGINE=cosyvoice3                  # one image per engine
+make tts-bench TARGETS="chatterbox=http://127.0.0.1:8802 cosyvoice3=http://127.0.0.1:8803"
+```
+
+`make tts-bench` renders the script and a set of insurance stress lines — S$ figures, policy
+numbers, unit numbers, MediShield Life, 终身健保 — through each candidate and builds a page to
+listen on, with latency, RTF, speaker drift and (with `--asr-url`) character error rate. The
+assessment of the candidates, their licences and what fits this product is in
+**[docs/tts-models.md](docs/tts-models.md)**. Short version: CosyVoice 3 is the one serious
+challenger; Chatterbox Turbo and VibeVoice are English-only; F5's weights and Fish's licence are
+non-commercial.
+
 ### Readiness means the right model, not just an open port
 
 `api/health` queries each service's `/v1/models` and checks the configured model is actually being

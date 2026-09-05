@@ -1,4 +1,5 @@
-.PHONY: setup dev run test models clean kb-ingest kb-lint kb-status kb-sources kb-ask
+.PHONY: setup dev run test models clean kb-ingest kb-lint kb-status kb-sources kb-ask \
+        tts-engines tts-deps tts-sidecar tts-build tts-bench
 
 VENV := .venv
 PY   := $(VENV)/bin/python
@@ -111,3 +112,28 @@ console-only:         ## just the console, against services already running
 name-audit:   ## render candidate spellings of a surname and build a page to listen to
 	$(PY) scripts/name_audit.py $(NAMES) $(if $(NAMES),,--from-personas)
 	@echo "open voices/audit/index.html"
+
+# ------------------------------------------------------------ TTS candidates
+# Trying another TTS model. Each engine is its own sidecar process (or image)
+# behind the same /tts contract; the console never learns which one it is
+# talking to. See docs/tts-models.md.
+TTS_ENGINE ?= chatterbox
+TTS_PORT   ?= 8802
+
+tts-engines:          ## list the engines the sidecar can serve
+	$(PY) scripts/tts_sidecar.py --list-engines
+
+tts-deps:             ## install one engine's dependencies into this venv:  make tts-deps TTS_ENGINE=f5
+	PIP="$(VENV)/bin/pip" TTS_ENGINE_PREFIX=$(CURDIR)/models ./scripts/tts_engine_deps.sh $(TTS_ENGINE)
+
+tts-sidecar:          ## run the sidecar here with one engine:  make tts-sidecar TTS_ENGINE=cosyvoice3 TTS_PORT=8803
+	COSYVOICE_HOME=$(CURDIR)/models/CosyVoice INDEXTTS_HOME=$(CURDIR)/models/index-tts \
+	$(PY) scripts/tts_sidecar.py --engine $(TTS_ENGINE) --port $(TTS_PORT)
+
+tts-build:            ## build the GPU sidecar image for one engine:  make tts-build TTS_ENGINE=cosyvoice3
+	docker build -f Dockerfile.tts --build-arg TTS_ENGINE=$(TTS_ENGINE) -t voicebot-tts:$(TTS_ENGINE) .
+
+tts-bench:            ## the Singapore insurance sentence set through one or more sidecars:
+	##   make tts-bench TARGETS="chatterbox=http://127.0.0.1:8802 cosyvoice3=http://127.0.0.1:8803"
+	$(PY) scripts/tts_bench.py $(TARGETS) $(BENCH_ARGS)
+	@echo "open voices/bench/latest/index.html"
