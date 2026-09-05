@@ -592,7 +592,18 @@ wrong when they diverge, and none of them raises an error:
 
 ### Trying another TTS model
 
-The sidecar serves one **engine** per process behind the same `/tts` contract: Chatterbox
+**In the console:** *Call setup → TTS model — experiment*. Pick a model from
+`config/tts-models.yaml` and every line of the next call is spoken by it, cache bypassed; the box
+under it says one typed line in that model without a call. **From the terminal:**
+
+```bash
+make tts-models                                     # what runs on this machine, and why not
+make tts-say MODEL=kokoro TEXT="Good afternoon Mr Tan."
+make tts-bench MODELS="chatterbox cosyvoice3 kokoro"
+```
+
+On the Mac the models load in-process through mlx-audio. On the GPU box each model is a
+sidecar. The sidecar serves one **engine** per process behind the same `/tts` contract: Chatterbox
 multilingual (default — the checkpoint the cache was rendered with), Chatterbox Turbo and Nano,
 CosyVoice 3, F5-TTS, IndexTTS-2, Kokoro, Fish Speech S2 (in-process or via its own server) and
 VibeVoice Realtime. Pick one with `TTS_ENGINE`

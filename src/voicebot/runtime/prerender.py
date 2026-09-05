@@ -98,10 +98,12 @@ class PrerenderCache:
             entry = voices.get(self.default_voice(), {})
         return entry or {}
 
-    def speaker_for(self, voice: str | None = None) -> str | None:
+    def speaker_for(self, voice: str | None = None,
+                    lang: str | None = None) -> str | None:
         """Named CustomVoice speaker. A fixed identity, unlike a voice
-        description, which samples a new speaker on every call."""
-        return self._entry(voice).get("speaker")
+        description, which samples a new speaker on every call. Per language
+        where the entry is a mapping, like the reference clip."""
+        return for_language(self._entry(voice).get("speaker"), lang)
 
     def reference_for(self, voice: str | None = None,
                       lang: str | None = None) -> str | None:
@@ -127,8 +129,23 @@ class PrerenderCache:
         better when told, and Fish will not clone without it — so a voice
         may carry `ref_text`, per language like the clip itself. Absent for
         every shipped voice, which keeps every existing cache key as it is.
+
+        Unlike the clip, a transcript does not fall back across languages: a
+        Mandarin line that clones the Mandarin clip must not be told the
+        English clip's words. The transcript is the one for the clip that
+        was actually chosen, or nothing.
         """
-        return for_language(self._entry(voice).get("ref_text"), lang) or None
+        entry = self._entry(voice)
+        texts = entry.get("ref_text")
+        if not isinstance(texts, dict):
+            return texts or None
+        refs = entry.get("ref_audio")
+        if isinstance(refs, dict):
+            # Which language's clip `reference_for` resolved to.
+            key = lang if lang in refs else ("en" if "en" in refs else next(iter(refs), None))
+        else:
+            key = lang
+        return texts.get(key) or None
 
     def target_f0(self, voice: str | None = None, lang: str | None = None) -> float:
         """Pitch every line of this voice is normalised to, in Hz. 0 disables.
@@ -191,7 +208,7 @@ class PrerenderCache:
         pieces = segment_by_script(text, lang)
         shape = "" if pieces == [(text, lang)] else repr(pieces)
         parts = [self.cfg.get("model", ""), lang, self.lang_code(lang), shape,
-                 self.speaker_for(voice) or "",
+                 self.speaker_for(voice, lang) or "",
                  self.reference_for(voice, lang) or "",
                  self.instruct_for(lang, voice),
                  repr(sorted(self.params_for(voice).items())),
@@ -292,7 +309,7 @@ class PrerenderCache:
         kwargs: dict[str, Any] = {}
         kwargs.update(self.params_for(voice))
         ref = self.reference_for(voice, lang)
-        speaker = self.speaker_for(voice)
+        speaker = self.speaker_for(voice, lang)
         if ref:
             kwargs["ref_audio"] = ref          # cloning: anchored to a file
             ref_text = self.reference_text_for(voice, lang)

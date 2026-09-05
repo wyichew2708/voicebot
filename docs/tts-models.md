@@ -13,6 +13,40 @@ them is chosen, which is why it is written down now rather than rediscovered the
 and language lists were read from the projects' own repositories and model cards on
 2026-09-05; they change.
 
+## Switching models: the short version
+
+Everything below is reachable from one file, `config/tts-models.yaml`, and three switches that
+read it. None of them needs a profile edit or a restart.
+
+**In the console.** *Call setup → TTS model — experiment.* Pick a model and every agent line of
+the next call — scripted turns included, cache bypassed on purpose — is spoken by it; the
+transcript shows the latency each line cost. The box under the picker says one typed line in
+the selected model without starting a call (Enter or **SAY**), and the player bar shows which
+model spoke and how long it took. Models the machine cannot run are greyed out with the reason
+in their tooltip. Blank returns to the shipped path.
+
+**From the terminal.**
+
+```bash
+make tts-models                                        # what runs here, and why not
+make tts-say MODEL=kokoro TEXT="Good afternoon Mr Tan, this is Michael from Etiqa."
+make tts-say MODEL=cosyvoice3 TEXT="您的保单在二月十日到期。" VOICE=female
+make tts-bench MODELS="chatterbox cosyvoice3 kokoro"   # the whole sentence set, side by side
+```
+
+`tts-say` writes `voices/bench/say/<model>.wav` and plays it. The `PROFILE` variable (default
+`mac-polyglot`) picks whose lab runs it: the Mac profile loads mlx-audio models in-process; the
+RHEL profile talks to the sidecars named in `backend.tts.sidecars` or `VOICEBOT_TTS_SIDECARS`.
+
+**Adding or changing a model** is a stanza in `config/tts-models.yaml`: label, languages, whether
+a clip changes the speaker (else `speaker` presets per language and `lang_codes`), the MLX repo,
+the GPU engine. A different quantisation is one line changed. The switch, the CLI and the
+benchmark all pick it up on the next request.
+
+Two things the switch does not do. It does not change the *voice* — the reference clips and
+presets a call uses are still the voice picker's — so the comparison is model against model on
+the same speaker. And it is fixed for the duration of a call, like the voice and the register.
+
 ## The candidates in one table
 
 | Model | Engine | Weights licence | zh | ms | Clones a clip | Mac (MLX) | Fit for this product |

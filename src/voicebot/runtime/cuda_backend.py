@@ -46,6 +46,13 @@ class CUDABackend(Backend):
         from .prerender import PrerenderCache
         self.prerender = PrerenderCache(cfg.get("tts", {}).get("prerender", {}),
                                         self.sample_rate)
+        # Candidate models, one sidecar each, switchable at runtime. Built
+        # only for the console's own backend: a lab per throwaway backend
+        # would recurse into itself (see SidecarLab._backend_for).
+        self.lab: Any = None
+        if cfg.get("tts", {}).get("lab", True):
+            from ..tts_models import SidecarLab
+            self.lab = SidecarLab(cfg.get("tts", {}), self.sample_rate)
 
     # ------------------------------------------------------------- helpers
 
@@ -147,6 +154,10 @@ class CUDABackend(Backend):
     async def speak(self, text: str, lang: str, prerendered: bool,
                     voice: str | None = None) -> Speech:
         t0 = time.perf_counter()
+        from ..tts_models import speak_with_active
+        trial = await speak_with_active(self.lab, text, lang, voice)
+        if trial is not None:
+            return trial
         if prerendered:
             cached = await self._run(self.prerender.get, text, lang, voice)
             if cached is not None:

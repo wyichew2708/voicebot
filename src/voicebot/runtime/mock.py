@@ -17,6 +17,10 @@ class MockBackend(Backend):
     def __init__(self, latency_ms: tuple[int, int] = (520, 760)) -> None:
         self._lo, self._hi = latency_ms
         self._rng = random.Random(7)   # deterministic: demos should repeat
+        # The model switch works here too — listed, selectable, silent — so
+        # the console can be exercised without a single model installed.
+        from ..tts_models import MockLab
+        self.lab = MockLab(self)
 
     def _lat(self) -> int:
         return self._rng.randint(self._lo, self._hi)

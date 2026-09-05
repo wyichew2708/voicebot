@@ -1,5 +1,5 @@
 .PHONY: setup dev run test models clean kb-ingest kb-lint kb-status kb-sources kb-ask \
-        tts-engines tts-deps tts-sidecar tts-build tts-bench
+        tts-models tts-say tts-engines tts-deps tts-sidecar tts-build tts-bench
 
 VENV := .venv
 PY   := $(VENV)/bin/python
@@ -119,8 +119,15 @@ name-audit:   ## render candidate spellings of a surname and build a page to lis
 # talking to. See docs/tts-models.md.
 TTS_ENGINE ?= chatterbox
 TTS_PORT   ?= 8802
+PROFILE    ?= mac-polyglot
 
-tts-engines:          ## list the engines the sidecar can serve
+tts-models:           ## the switchable models (config/tts-models.yaml) and whether each runs here
+	$(PY) scripts/tts_say.py --list --profile $(PROFILE)
+
+tts-say:              ## one line in one model:  make tts-say MODEL=cosyvoice3 TEXT="Good afternoon Mr Tan."
+	$(PY) scripts/tts_say.py --profile $(PROFILE) --model $(MODEL) --text "$(TEXT)" $(if $(LANG_),--lang $(LANG_),) $(if $(VOICE),--voice $(VOICE),) --play
+
+tts-engines:          ## list the engines the GPU sidecar can serve
 	$(PY) scripts/tts_sidecar.py --list-engines
 
 tts-deps:             ## install one engine's dependencies into this venv:  make tts-deps TTS_ENGINE=f5
@@ -134,7 +141,8 @@ tts-sidecar:          ## run the sidecar here with one engine:  make tts-sidecar
 tts-build:            ## build the GPU sidecar image for one engine:  make tts-build TTS_ENGINE=cosyvoice3
 	docker build -f Dockerfile.tts --build-arg TTS_ENGINE=$(TTS_ENGINE) -t voicebot-tts:$(TTS_ENGINE) .
 
-tts-bench:            ## the Singapore insurance sentence set through one or more sidecars:
-	##   make tts-bench TARGETS="chatterbox=http://127.0.0.1:8802 cosyvoice3=http://127.0.0.1:8803"
-	$(PY) scripts/tts_bench.py $(TARGETS) $(BENCH_ARGS)
+tts-bench:            ## the Singapore insurance sentence set through models or sidecars:
+	##   make tts-bench MODELS="chatterbox cosyvoice3 kokoro"        (config/tts-models.yaml, this profile)
+	##   make tts-bench TARGETS="cosyvoice3=http://127.0.0.1:8803"   (a sidecar by address)
+	$(PY) scripts/tts_bench.py --profile $(PROFILE) $(foreach m,$(MODELS),--model $(m)) $(TARGETS) $(BENCH_ARGS)
 	@echo "open voices/bench/latest/index.html"

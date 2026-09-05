@@ -62,6 +62,12 @@ def main() -> int:
                                  epilog=__doc__.split("\n\n", 1)[1])
     ap.add_argument("targets", nargs="*", metavar="NAME=URL",
                     help="a running sidecar, e.g. cosyvoice3=http://127.0.0.1:8803")
+    ap.add_argument("--model", action="append", default=[], metavar="ID",
+                    help="a model from config/tts-models.yaml, run the way this profile's "
+                         "lab would run it (mlx-audio in-process on a Mac, a sidecar on the "
+                         "GPU box); repeatable")
+    ap.add_argument("--profile", default="mac-polyglot",
+                    help="which profile's lab resolves --model (default mac-polyglot)")
     ap.add_argument("--mlx", action="append", default=[], metavar="REPO",
                     help="an mlx-audio model to render in-process (Mac); repeatable")
     ap.add_argument("--mlx-voice", default=None, metavar="NAME",
@@ -77,6 +83,8 @@ def main() -> int:
     ap.add_argument("--limit", type=int, default=None, help="first N lines only")
     ap.add_argument("--raw", action="store_true",
                     help="send the written line whole — the model's own normalisation")
+    ap.add_argument("--voice", default=None,
+                    help="for --model: which of the profile's voices to clone (default: its default)")
     ap.add_argument("--ref-en", default=None, help="English reference clip to clone")
     ap.add_argument("--ref-zh", default=None, help="Mandarin reference clip to clone")
     ap.add_argument("--ref-text-en", default=None, help="what the English clip says")
@@ -88,8 +96,8 @@ def main() -> int:
     ap.add_argument("--out", default=None, help=f"default {OUT}/<timestamp>")
     args = ap.parse_args()
 
-    if not args.targets and not args.mlx and not args.f5_mlx:
-        ap.error("give at least one NAME=URL sidecar, --mlx REPO, or --f5-mlx")
+    if not args.targets and not args.mlx and not args.f5_mlx and not args.model:
+        ap.error("give at least one --model ID, NAME=URL sidecar, --mlx REPO, or --f5-mlx")
     lang_codes = None
     if args.mlx_lang_codes:
         lang_codes = dict(pair.split("=", 1) for pair in args.mlx_lang_codes.split(","))
@@ -114,6 +122,23 @@ def main() -> int:
                                    speaker=args.mlx_voice, lang_codes=lang_codes))
     if args.f5_mlx:
         targets.append(B.F5MLXTarget(args.sample_rate, refs, texts))
+    if args.model:
+        if args.raw:
+            ap.error("--raw is for NAME=URL sidecars")
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "tts_say", Path(__file__).resolve().parent / "tts_say.py")
+        say = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(say)
+        from voicebot import config
+        lab = getattr(say._backend(config.load(args.profile)), "lab", None)
+        if lab is None:
+            ap.error(f"profile {args.profile!r} has no TTS lab")
+        for mid in args.model:
+            try:
+                targets.append(B.LabTarget(lab, mid, args.sample_rate, voice=args.voice))
+            except KeyError:
+                ap.error(f"unknown model {mid!r}; see config/tts-models.yaml")
 
     transcribe = None
     if args.asr_url:

@@ -249,6 +249,24 @@ class MLXTarget:
         return got or b""
 
 
+class LabTarget:
+    """A model from config/tts-models.yaml, rendered by the profile's lab —
+    the same object the console's switch and `make tts-say` use, so the
+    benchmark hears exactly what a call would."""
+
+    def __init__(self, lab: Any, model_id: str, sample_rate: int = 16000,
+                 voice: str | None = None) -> None:
+        self.spec = lab.spec(model_id)              # KeyError for an unknown id
+        self.name = model_id
+        self.lab = lab
+        self.sample_rate = sample_rate
+        self.voice = voice
+
+    async def render(self, line: Line) -> bytes:
+        sp = await self.lab.render(line.text, line.lang, self.voice, self.spec.id)
+        return sp.pcm
+
+
 class F5MLXTarget:
     """F5-TTS on a Mac through the `f5-tts-mlx` package, which is its own
     port rather than an mlx-audio family. Product mode: the line is split by
@@ -265,19 +283,11 @@ class F5MLXTarget:
         self.model_name = model_name
 
     def _piece(self, text: str, lang: str) -> bytes:
-        import numpy as np
-        from f5_tts_mlx.generate import generate
+        from .tts_models import f5_mlx_piece
 
         ref = self.refs.get(lang) or self.refs.get("en")
-        audio = generate(generation_text=text, model_name=self.model_name,
-                         ref_audio_path=ref, ref_audio_text=self.ref_texts.get(lang))
-        audio = np.asarray(audio, dtype=np.float32).squeeze()
-        src = 24000
-        if src != self.sample_rate and len(audio) > 1:
-            n = int(len(audio) * self.sample_rate / src)
-            audio = np.interp(np.linspace(0, len(audio) - 1, n),
-                              np.arange(len(audio)), audio).astype(np.float32)
-        return (np.clip(audio, -1, 1) * 32767).astype("<i2").tobytes()
+        return f5_mlx_piece(text, ref, self.ref_texts.get(lang), self.sample_rate,
+                            self.model_name)
 
     async def render(self, line: Line) -> bytes:
         pieces = segment_by_script(line.text, line.lang)

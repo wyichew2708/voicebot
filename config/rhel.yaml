@@ -27,6 +27,13 @@ backend:
     # part of the pipeline flags.
     base_url: http://127.0.0.1:8802
     model: chatterbox-multilingual-v3
+    # Candidate models for the console's "TTS model" switch, one sidecar
+    # each, by engine name (config/tts-models.yaml). VOICEBOT_TTS_SIDECARS
+    # adds to or overrides this. Empty here: the default sidecar above
+    # counts for whatever engine it reports.
+    # sidecars:
+    #   cosyvoice3: http://127.0.0.1:8803
+    #   vibevoice: http://127.0.0.1:8804
     prerender:
       # Identical to the Mac profile on purpose: cache keys are
       # platform-independent, so `make prerender` on a laptop produces wavs
