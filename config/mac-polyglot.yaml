@@ -70,11 +70,13 @@ backend:
         # English keys are untouched by any of this; only Mandarin re-renders.
         male:
           label: "Male"
+          gender: male
           note: "US · original"
           ref_audio: {en: voices/refs/male.wav, zh: voices/refs/zm_yunjian.wav}      # Qwen3-TTS "aiden"
           target_f0: {en: 162, zh: 135}
         female:
           label: "Female"
+          gender: female
           note: "US · original"
           ref_audio: {en: voices/refs/female.wav, zh: voices/refs/zf_xiaobei.wav}
           # Cloning copies the reference speaker's delivery, and this one
@@ -107,28 +109,33 @@ backend:
         # clip would drag every line toward a figure the clone never produces.
         isabella:
           label: "Isabella"
+          gender: female
           note: "UK · steady"
           ref_audio: {en: voices/refs/bf_isabella.wav, zh: voices/refs/zf_xiaobei.wav}
           target_f0: {en: 200, zh: 226}
         bella:
           label: "Bella"
+          gender: female
           note: "US · warm"
           ref_audio: {en: voices/refs/af_bella.wav, zh: voices/refs/zf_xiaobei.wav}
           target_f0: {en: 209, zh: 226}
         sarah:
           label: "Sarah"
+          gender: female
           note: "US · brighter"
           ref_audio: {en: voices/refs/af_sarah.wav, zh: voices/refs/zf_xiaobei.wav}
           target_f0: {en: 178, zh: 226}
 
         michael:
           label: "Michael"
+          gender: male
           note: "US · deeper"
           ref_audio: {en: voices/refs/am_michael.wav, zh: voices/refs/zm_yunjian.wav}
           target_f0: {en: 125, zh: 135}
 
         eric:
           label: "Eric"
+          gender: male
           # 161 Hz against the original Male voice's 162 — the nearest match
           # in the set, for keeping that character while gaining a reference
           # clip nearly three times as long. Reads at 140 wpm against Male's

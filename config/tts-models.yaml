@@ -1,0 +1,91 @@
+# TTS models that can be tried at runtime, without editing a profile.
+#
+# The console's "TTS model" switch, `make tts-say`, and the benchmark's
+# `--model` all read this file. Each entry says what the model speaks, whether
+# a reference clip changes the speaker, and how to reach it on each platform:
+#
+#   mlx:  {repo, package?}   an mlx-audio repo id for the Mac; `package` names a
+#                            loader other than the pinned mlx-audio
+#   gpu:  {engine}           the sidecar engine (scripts/tts_sidecar.py); the
+#                            sidecar's address comes from backend.tts.sidecars
+#                            in the profile or VOICEBOT_TTS_SIDECARS
+#
+# A model that does not clone names a `speaker` preset per gender and per
+# language — it follows the voice picker's male/female, since it cannot
+# follow the clip — and `lang_codes` maps this repo's en/zh to what the model
+# calls them.
+#
+# Experiments stage: licence is recorded, not enforced. See docs/tts-models.md.
+models:
+  chatterbox:
+    label: "Chatterbox multilingual v3"
+    note: "current — the checkpoint the cache was rendered with · MIT"
+    languages: [ar, da, de, el, en, es, fi, fr, he, hi, it, ja, ko, ms, nl, "no", pl, pt, ru, sv, sw, tr, zh]
+    clone: true
+    mlx: {repo: mlx-community/chatterbox-multilingual-v3}
+    gpu: {engine: chatterbox}
+
+  cosyvoice3:
+    label: "CosyVoice 3 0.5B"
+    note: "Apache-2.0 · zh/en + 7 more · the one serious challenger"
+    languages: [zh, en, ja, ko, de, es, fr, it, ru, yue]
+    clone: true
+    # The mlx-community build loads through the mlx-audio-plus fork, which
+    # installs under the same `mlx_audio` name — give it its own venv.
+    mlx: {repo: mlx-community/Fun-CosyVoice3-0.5B-2512-8bit, package: mlx-audio-plus}
+    gpu: {engine: cosyvoice3}
+
+  chatterbox-turbo:
+    label: "Chatterbox Turbo"
+    note: "MIT · English only · [laugh] [chuckle] [cough] inline"
+    languages: [en]
+    clone: true
+    mlx: {repo: mlx-community/chatterbox-turbo-8bit}
+    gpu: {engine: chatterbox-turbo}
+
+  indextts2:
+    label: "IndexTTS-2"
+    note: "bilibili licence · zh/en · 1.7B, expressive"
+    languages: [zh, en]
+    clone: true
+    mlx: {repo: mlx-community/IndexTTS-2-fp16}
+    gpu: {engine: indextts2}
+
+  vibevoice:
+    label: "VibeVoice Realtime 0.5B"
+    note: "MIT · English only · preset voices"
+    languages: [en]
+    clone: false
+    speaker:
+      male: {en: Carter}
+      female: {en: Emma}
+    mlx: {repo: mlx-community/VibeVoice-Realtime-0.5B-8bit}
+    gpu: {engine: vibevoice}
+
+  kokoro:
+    label: "Kokoro 82M"
+    note: "Apache-2.0 · preset voices · the fallback"
+    languages: [en, zh]
+    clone: false
+    speaker:
+      male: {en: am_michael, zh: zm_yunjian}
+      female: {en: af_heart, zh: zf_xiaobei}
+    lang_codes: {en: a, zh: z}
+    mlx: {repo: mlx-community/Kokoro-82M-4bit}
+    gpu: {engine: kokoro}
+
+  f5:
+    label: "F5-TTS"
+    note: "weights CC-BY-NC-4.0 · en/zh · experiments only"
+    languages: [en, zh]
+    clone: true
+    # Its own port, not an mlx-audio family.
+    mlx: {package: f5-tts-mlx}
+    gpu: {engine: f5}
+
+  fish:
+    label: "Fish Speech S2-Pro"
+    note: "research licence · 80+ languages · ~5B · experiments only"
+    languages: []            # empty: no fixed list
+    clone: true
+    gpu: {engine: fish}

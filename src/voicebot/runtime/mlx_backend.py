@@ -30,6 +30,10 @@ class MLXBackend(Backend):
         from .prerender import PrerenderCache
         self.prerender = PrerenderCache(cfg.get("tts", {}).get("prerender", {}),
                                         cfg.get("sample_rate", 16000))
+        # Candidate models, switchable at runtime. Shares the worker thread
+        # and the voices' clips; see tts_models.py.
+        from ..tts_models import MLXLab
+        self.lab = MLXLab(self.prerender, cfg.get("sample_rate", 16000), self._run)
         self._llm: Any = None
         self._llm_tok: Any = None
         self._asr: Any = None
@@ -217,6 +221,13 @@ class MLXBackend(Backend):
         """
         sr = self.cfg.get("sample_rate", 16000)
         t0 = time.perf_counter()
+
+        # A selected trial model speaks every line, cache included: the point
+        # is to hear the candidate, not the incumbent's recordings.
+        from ..tts_models import speak_with_active
+        trial = await speak_with_active(self.lab, text, lang, voice)
+        if trial is not None:
+            return trial
 
         if prerendered:
             # Cache hit is a disk read: this is the whole point of the design.

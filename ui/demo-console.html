@@ -246,6 +246,12 @@
   select { width: 100%; font: inherit; font-size: 12.5px; padding: 7px 9px;
            border-radius: 8px; border: 1px solid var(--line);
            background: var(--surface); color: var(--ink); }
+  .tryrow { display: flex; gap: 6px; margin-top: 6px; }
+  .tryrow input { flex: 1; min-width: 0; font: inherit; font-size: 12px; padding: 6px 8px;
+                  border: 1px solid var(--line); border-radius: 8px;
+                  background: var(--surface); color: var(--ink); }
+  .tryrow button { flex: none; }
+  .tryrow button:disabled { opacity: .5; cursor: progress; }
 
   .persona { display: grid; grid-template-columns: auto 1fr; gap: 1px 10px; font-size: 11px; }
   .persona dt { font-family: var(--f-mono); font-size: 9.5px; letter-spacing: .07em;
@@ -534,6 +540,19 @@
           <div class="vpickhint" id="voiceHint"></div>
         </div>
         <div class="field">
+          <label class="fieldlab" for="selTts">TTS model &mdash; experiment</label>
+          <select id="selTts" title="Every agent line, scripted or not, is spoken by
+this model for the whole call. Blank is the shipped path: cache plus live voice.">
+            <option value="">Shipped path (cache + live voice)</option>
+          </select>
+          <div class="tryrow">
+            <input id="inTry" type="text" autocomplete="off" spellcheck="false"
+                   placeholder="type a line, hear it in this model">
+            <button type="button" class="vsbtn" id="btnTry">SAY</button>
+          </div>
+          <div class="vpickhint" id="ttsHint"></div>
+        </div>
+        <div class="field">
           <span class="fieldlab">Mic sensitivity</span>
           <div class="seg" id="segMic" role="group" aria-label="Microphone sensitivity"
                title="Higher hears a quiet start; too high and the room counts as
@@ -603,6 +622,26 @@ speech. Each setting is a multiple of the measured room level."></div>
         <p class="vserr" id="vsErr" hidden></p>
 
         <div class="vslist" id="vsList"></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="phead">
+        <span class="ptitle">Voice samples</span>
+        <button class="micbtn" id="sgToggle" aria-expanded="false"
+                aria-controls="sgBody" title="Recordings to listen to without a model: the shipped voices, the speakers they came from, other models — and every line said in the box above">LISTEN</button>
+      </div>
+      <div class="pbody" id="sgBody" hidden>
+        <p class="vsnote">Female and male voices from the models tried so far, and
+          whatever this machine has rendered with the SAY box or
+          <b>make tts-say</b>. Nothing here needs a model loaded.</p>
+        <div class="seg" id="sgFilter" role="group" aria-label="Filter samples">
+          <button data-g="" aria-pressed="true">ALL</button>
+          <button data-g="female" aria-pressed="false">FEMALE</button>
+          <button data-g="male" aria-pressed="false">MALE</button>
+          <button data-g="rendered" aria-pressed="false">MINE</button>
+        </div>
+        <div class="vslist" id="sgList"></div>
       </div>
     </div>
 
@@ -1007,6 +1046,169 @@ speech. Each setting is a multiple of the measured room level."></div>
     }).catch(function () {});
   }
 
+  // ---------------------------------------------------------- TTS models
+  // The experiments switch. A selected model speaks every line of the next
+  // call, cache included; the box below it says one line in any model
+  // without starting a call. Both read config/tts-models.yaml via the server.
+  var ttsModel = "", ttsModels = [];
+
+  function ttsHint(msg, bad) {
+    var el = $("ttsHint");
+    el.textContent = msg || "";
+    el.style.color = bad ? "var(--block)" : "";
+  }
+  function ttsRefresh() {
+    return fetch("/api/tts/models").then(function (r) { return r.json(); }).then(function (d) {
+      var sel = $("selTts");
+      ttsModels = d.models || [];
+      while (sel.options.length > 1) sel.remove(1);
+      ttsModels.forEach(function (m) {
+        var o = document.createElement("option");
+        o.value = m.id;
+        o.textContent = m.label + (m.available ? "" : " — not runnable here");
+        o.disabled = !m.available;
+        o.title = m.available ? (m.note || "") : (m.reason || "");
+        sel.appendChild(o);
+      });
+      ttsModel = d.active || "";
+      sel.value = ttsModel;
+      ttsPaintHint();
+    }).catch(function () {});
+  }
+  function ttsPaintHint() {
+    if (!ttsModel) { ttsHint(""); return; }
+    var m = null;
+    ttsModels.forEach(function (x) { if (x.id === ttsModel) m = x; });
+    ttsHint(m ? ("every line of the next call: " + m.label +
+                 (m.languages && m.languages.length ? " · " + m.languages.join(" ") : "") +
+                 (m.note ? " · " + m.note : "")) : "");
+  }
+  $("selTts").addEventListener("change", function () {
+    var want = this.value;
+    if (running) { this.value = ttsModel; ttsHint("fixed for the duration of a call", true); return; }
+    fetch("/api/tts/model", { method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: want || null }) })
+      .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, d: d }; }); })
+      .then(function (x) {
+        ttsModel = x.d.active || "";
+        $("selTts").value = ttsModel;
+        if (!x.ok) ttsHint(x.d.error || "could not switch", true); else ttsPaintHint();
+        refreshHealth();
+      }).catch(function () { ttsHint("could not reach the server", true); });
+  });
+  function ttsSay() {
+    var text = $("inTry").value.trim();
+    if (!text) { $("inTry").focus(); return; }
+    var btn = $("btnTry"), model = $("selTts").value;
+    btn.disabled = true;
+    ttsHint("rendering" + (model ? " with " + model : "") + "…");
+    fetch("/api/tts/say", { method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: text, voice: voice, model: model || null }) })
+      .then(function (r) {
+        if (!r.ok) return r.json().then(function (d) { throw new Error(d.error || r.statusText); });
+        var ms = r.headers.get("X-Latency-Ms"), who = r.headers.get("X-Model"),
+            lang = r.headers.get("X-Lang");
+        return r.blob().then(function (b) {
+          var a = ensureAudio(); stopPlayback();
+          a.src = URL.createObjectURL(b);
+          $("player").classList.add("on");
+          $("playerLabel").textContent = who + " · " + lang + " · " + ms + " ms";
+          ttsHint(who + " said it in " + ms + " ms — kept under Voice samples · MINE");
+          if (!$("sgBody").hidden) sgRefresh();
+          return a.play().catch(function () {});
+        });
+      })
+      .catch(function (e) { ttsHint(e.message, true); })
+      .then(function () { btn.disabled = false; });
+  }
+  $("btnTry").addEventListener("click", ttsSay);
+  $("inTry").addEventListener("keydown", function (e) { if (e.key === "Enter") ttsSay(); });
+  ttsRefresh();
+
+  // ---------------------------------------------------------- samples
+  // A listening gallery. Shipped recordings (samples/) and lines rendered
+  // on this machine, grouped by the one thing everyone asks first: is it a
+  // woman or a man. Plays through the same player as a call.
+  var sgFilter = "", sgRows = [];
+
+  function sgRefresh() {
+    return fetch("/api/samples").then(function (r) { return r.json(); }).then(function (d) {
+      sgRows = d.samples || [];
+      sgPaint();
+    }).catch(function () {});
+  }
+  function sgPaint() {
+    var box = $("sgList");
+    box.innerHTML = "";
+    var rows = sgRows.filter(function (s) {
+      if (!sgFilter) return true;
+      if (sgFilter === "rendered") return s.source === "rendered";
+      return s.gender === sgFilter;
+    });
+    if (!rows.length) {
+      var p = document.createElement("p");
+      p.className = "vsnote";
+      p.textContent = sgFilter === "rendered"
+        ? "Nothing rendered here yet — type a line in the SAY box above."
+        : "No samples.";
+      box.appendChild(p);
+      return;
+    }
+    // Model, then source: the comparison people make is one model's woman
+    // against another's, not one file against the next in the directory.
+    var byModel = {};
+    rows.forEach(function (s) {
+      var k = (s.source === "rendered" ? "Rendered here · " : "") + (s.model || "other");
+      (byModel[k] = byModel[k] || []).push(s);
+    });
+    Object.keys(byModel).forEach(function (k) {
+      var head = document.createElement("div");
+      head.className = "vswarm";
+      head.textContent = k;
+      box.appendChild(head);
+      byModel[k].forEach(function (s) {
+        var el = document.createElement("div");
+        el.className = "vsvoice";
+        el.innerHTML = '<div class="vh"><span class="vn"></span><span class="vm"></span></div>' +
+                       '<div class="vsacts"></div>';
+        el.querySelector(".vn").textContent =
+          (s.gender === "female" ? "♀ " : s.gender === "male" ? "♂ " : "") + s.label;
+        el.querySelector(".vm").textContent =
+          [s.lang, s.seconds ? s.seconds + "s" : ""].filter(Boolean).join(" · ");
+        var b = document.createElement("button");
+        b.type = "button"; b.className = "vsbtn";
+        b.textContent = "Play";
+        b.addEventListener("click", function () {
+          var a = ensureAudio(); stopPlayback();
+          a.src = "/api/samples/" + s.id + "?t=" + Date.now();
+          $("player").classList.add("on");
+          $("playerLabel").textContent = s.label + (s.model ? " · " + s.model : "");
+          a.play().catch(function () {});
+        });
+        el.querySelector(".vsacts").appendChild(b);
+        box.appendChild(el);
+      });
+    });
+  }
+  Array.prototype.forEach.call($("sgFilter").children, function (b) {
+    b.addEventListener("click", function () {
+      sgFilter = b.getAttribute("data-g") || "";
+      Array.prototype.forEach.call($("sgFilter").children, function (c) {
+        c.setAttribute("aria-pressed", c === b ? "true" : "false");
+      });
+      sgPaint();
+    });
+  });
+  $("sgToggle").addEventListener("click", function () {
+    var body = $("sgBody"), open = body.hidden;
+    body.hidden = !open;
+    this.setAttribute("aria-expanded", open ? "true" : "false");
+    this.textContent = open ? "CLOSE" : "LISTEN";
+    if (open) sgRefresh();
+  });
+
   // ---------------------------------------------------------- voice studio
   // Recording a reference clip is not the same job as listening on a call:
   // no echo cancellation, no noise suppression, no automatic gain. All three
@@ -1303,6 +1505,9 @@ speech. Each setting is a multiple of the measured room level."></div>
       r.row.setAttribute("aria-checked", v.id === voice ? "true" : "false");
       var warm = v.warm && v.warm.state === "done";
       var bits = [];
+      // Said outright: a preset model (Kokoro, VibeVoice) follows this rather
+      // than the clip, so the picker should say which it will follow.
+      if (v.gender) bits.push(v.gender === "female" ? "♀ female" : "♂ male");
       if (v.note) bits.push(v.note);
       if (v.target_f0) bits.push(Math.round(v.target_f0) + " Hz");
       r.sub.textContent = bits.join(" · ");

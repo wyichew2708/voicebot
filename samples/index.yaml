@@ -1,0 +1,77 @@
+# What each recording in this directory is, so the console can offer them
+# as a listening gallery. Every file here was rendered during earlier voice
+# work on this repo; the catalogue is the memory of which model and which
+# speaker made it. A wav without an entry is still served, under its filename,
+# with the gender guessed from the name.
+#
+#   gender: female | male | unknown      model: what rendered it
+#   lang:   en | zh | nan (Hokkien)      note:  free text
+samples:
+  # --- the shipped voices, as a call hears them ------------------------------
+  final_female_greeting.wav:  {gender: female, model: Chatterbox multilingual, lang: en, label: "Female — turn 1 (shipped voice)"}
+  final_male_greeting.wav:    {gender: male,   model: Chatterbox multilingual, lang: en, label: "Male — turn 1 (shipped voice)"}
+  console_greeting_male_warm.wav: {gender: male, model: Chatterbox multilingual, lang: en, label: "Male, warm — console greeting"}
+  cb_female_greet.wav:        {gender: female, model: Chatterbox multilingual, lang: en, label: "Female (vivian clip) — greeting"}
+  cb_female_premium.wav:      {gender: female, model: Chatterbox multilingual, lang: en, label: "Female (vivian clip) — premium turn"}
+  cb_male_greet.wav:          {gender: male,   model: Chatterbox multilingual, lang: en, label: "Male (aiden clip) — greeting"}
+  cb_male_premium.wav:        {gender: male,   model: Chatterbox multilingual, lang: en, label: "Male (aiden clip) — premium turn"}
+  chatterbox_female_vivian.wav: {gender: female, model: Chatterbox multilingual, lang: en, label: "Female — cloned from vivian"}
+  chatterbox_male_aiden.wav:  {gender: male,   model: Chatterbox multilingual, lang: en, label: "Male — cloned from aiden"}
+
+  # --- Qwen3-TTS named speakers (the source of the male/female reference clips)
+  vivian.wav:                 {gender: female, model: Qwen3-TTS CustomVoice, lang: en, label: "Vivian"}
+  serena.wav:                 {gender: female, model: Qwen3-TTS CustomVoice, lang: en, label: "Serena"}
+  ono_anna.wav:               {gender: female, model: Qwen3-TTS CustomVoice, lang: en, label: "Ono Anna"}
+  sohee.wav:                  {gender: female, model: Qwen3-TTS CustomVoice, lang: en, label: "Sohee"}
+  aiden.wav:                  {gender: male,   model: Qwen3-TTS CustomVoice, lang: en, label: "Aiden"}
+  dylan.wav:                  {gender: male,   model: Qwen3-TTS CustomVoice, lang: en, label: "Dylan"}
+  eric.wav:                   {gender: male,   model: Qwen3-TTS CustomVoice, lang: en, label: "Eric"}
+  ryan.wav:                   {gender: male,   model: Qwen3-TTS CustomVoice, lang: en, label: "Ryan"}
+  uncle_fu.wav:               {gender: male,   model: Qwen3-TTS CustomVoice, lang: en, label: "Uncle Fu"}
+  qwen_vivian_greet.wav:      {gender: female, model: Qwen3-TTS CustomVoice, lang: en, label: "Vivian — greeting"}
+  qwen_vivian_premium.wav:    {gender: female, model: Qwen3-TTS CustomVoice, lang: en, label: "Vivian — premium turn"}
+  qwen_aiden_greet.wav:       {gender: male,   model: Qwen3-TTS CustomVoice, lang: en, label: "Aiden — greeting"}
+  qwen_aiden_premium.wav:     {gender: male,   model: Qwen3-TTS CustomVoice, lang: en, label: "Aiden — premium turn"}
+  aiden_greet.wav:            {gender: male,   model: Qwen3-TTS CustomVoice, lang: en, label: "Aiden — greeting"}
+  aiden_premium.wav:          {gender: male,   model: Qwen3-TTS CustomVoice, lang: en, label: "Aiden — premium turn"}
+  dylan_greet.wav:            {gender: male,   model: Qwen3-TTS CustomVoice, lang: en, label: "Dylan — greeting"}
+  dylan_premium.wav:          {gender: male,   model: Qwen3-TTS CustomVoice, lang: en, label: "Dylan — premium turn"}
+  eric_greet.wav:             {gender: male,   model: Qwen3-TTS CustomVoice, lang: en, label: "Eric — greeting"}
+  eric_premium.wav:           {gender: male,   model: Qwen3-TTS CustomVoice, lang: en, label: "Eric — premium turn"}
+  ryan_greet.wav:             {gender: male,   model: Qwen3-TTS CustomVoice, lang: en, label: "Ryan — greeting"}
+  ryan_premium.wav:           {gender: male,   model: Qwen3-TTS CustomVoice, lang: en, label: "Ryan — premium turn"}
+  uncle_fu_greet.wav:         {gender: male,   model: Qwen3-TTS CustomVoice, lang: en, label: "Uncle Fu — greeting"}
+  uncle_fu_premium.wav:       {gender: male,   model: Qwen3-TTS CustomVoice, lang: en, label: "Uncle Fu — premium turn"}
+
+  # --- Qwen3-TTS VoiceDesign: voices described in prose (config/voice-presets.yaml)
+  f1.wav: {gender: female, model: Qwen3-TTS VoiceDesign, lang: en, label: "f1 — warm professional, thirties"}
+  f2.wav: {gender: female, model: Qwen3-TTS VoiceDesign, lang: en, label: "f2 — bright, energetic, twenties"}
+  f3.wav: {gender: female, model: Qwen3-TTS VoiceDesign, lang: en, label: "f3 — calm, authoritative, forties"}
+  f4.wav: {gender: female, model: Qwen3-TTS VoiceDesign, lang: en, label: "f4 — crisp, efficient"}
+  m1.wav: {gender: male,   model: Qwen3-TTS VoiceDesign, lang: en, label: "m1 — brisk professional, thirties"}
+  m2.wav: {gender: male,   model: Qwen3-TTS VoiceDesign, lang: en, label: "m2 — warm, reassuring, forties"}
+  m3.wav: {gender: male,   model: Qwen3-TTS VoiceDesign, lang: en, label: "m3 — younger, upbeat"}
+  m4.wav: {gender: male,   model: Qwen3-TTS VoiceDesign, lang: en, label: "m4 — soft-spoken"}
+  sg_female.wav:              {gender: female, model: Qwen3-TTS VoiceDesign, lang: en, label: "Singaporean female (described)"}
+  sg_female_turn5.wav:        {gender: female, model: Qwen3-TTS VoiceDesign, lang: en, label: "Singaporean female — turn 5"}
+  sg_male.wav:                {gender: male,   model: Qwen3-TTS VoiceDesign, lang: en, label: "Singaporean male (described)"}
+  sg_male_turn5.wav:          {gender: male,   model: Qwen3-TTS VoiceDesign, lang: en, label: "Singaporean male — turn 5"}
+  Qwen3TTS-VoiceDesign_EN_sg_female.wav: {gender: female, model: Qwen3-TTS VoiceDesign, lang: en, label: "Singaporean female, English"}
+  Qwen3TTS-VoiceDesign_EN_sg_male.wav:   {gender: male,   model: Qwen3-TTS VoiceDesign, lang: en, label: "Singaporean male, English"}
+  Qwen3TTS-VoiceDesign_ZH_sg_female.wav: {gender: female, model: Qwen3-TTS VoiceDesign, lang: zh, label: "Singaporean female, Mandarin"}
+
+  # --- other models heard along the way -------------------------------------
+  Kokoro-82M_EN.wav:          {gender: female, model: Kokoro 82M, lang: en, label: "Kokoro af_heart (default preset)"}
+  higgs-audio-v2.wav:         {gender: unknown, model: Higgs Audio v2, lang: en, label: "Higgs Audio v2 — long sample"}
+  voxcpm2.wav:                {gender: unknown, model: VoxCPM2, lang: en, label: "VoxCPM2"}
+  voxcpm2_greet.wav:          {gender: unknown, model: VoxCPM2, lang: en, label: "VoxCPM2 — greeting"}
+  voxcpm2_premium.wav:        {gender: unknown, model: VoxCPM2, lang: en, label: "VoxCPM2 — premium turn"}
+  singlish_turn1.wav:         {gender: female, model: mesolitica VITS Singlish, lang: en, label: "NSC-trained Singlish — turn 1"}
+  singlish_turn3.wav:         {gender: female, model: mesolitica VITS Singlish, lang: en, label: "NSC-trained Singlish — turn 3"}
+  singlish_turn5.wav:         {gender: female, model: mesolitica VITS Singlish, lang: en, label: "NSC-trained Singlish — turn 5"}
+  singlish_turn7.wav:         {gender: female, model: mesolitica VITS Singlish, lang: en, label: "NSC-trained Singlish — turn 7"}
+  standard_turn1.wav:         {gender: female, model: mesolitica VITS Singlish, lang: en, label: "NSC-trained, standard wording — turn 1"}
+  standard_turn5.wav:         {gender: female, model: mesolitica VITS Singlish, lang: en, label: "NSC-trained, standard wording — turn 5"}
+  hokkien_1_sample.wav:       {gender: unknown, model: MERaLiON OmniVoice Hokkien, lang: nan, label: "Hokkien — sample"}
+  hokkien_2_due.wav:          {gender: unknown, model: MERaLiON OmniVoice Hokkien, lang: nan, label: "Hokkien — due date"}
+  hokkien_3_thanks.wav:       {gender: unknown, model: MERaLiON OmniVoice Hokkien, lang: nan, label: "Hokkien — thanks"}

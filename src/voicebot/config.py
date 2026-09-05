@@ -20,6 +20,11 @@ _ENV_OVERRIDES = {
     "VOICEBOT_LLM_URL": ("backend", "llm", "base_url"),
     "VOICEBOT_LLM_MODEL": ("backend", "llm", "model"),
     "VOICEBOT_TTS_URL": ("backend", "tts", "base_url"),
+    # The live model and the pre-render model, for trying a candidate without
+    # editing a profile. The cache key carries the model name, so a trial
+    # renders beside the shipped lines rather than over them.
+    "VOICEBOT_TTS_MODEL": ("backend", "tts", "model"),
+    "VOICEBOT_PRERENDER_MODEL": ("backend", "tts", "prerender", "model"),
     "VOICEBOT_CACHE_DIR": ("backend", "tts", "prerender", "cache_dir"),
     "VOICEBOT_REGISTER": ("register",),
 }

@@ -44,10 +44,19 @@ start voicebot-asr docker.io/vllm/vllm-openai:latest 8801 \
   --max-model-len 8192 --gpu-memory-utilization 0.22 --trust-remote-code
 
 # TTS — improvised lines only; scripted turns come from voices/cache.
+#
+# One image per engine, tagged by name: `make tts-build TTS_ENGINE=cosyvoice3`
+# builds localhost/voicebot-tts:cosyvoice3. The default is the checkpoint the
+# cache was rendered with, so a live line matches a cached one. A trial
+# engine is best started on its own port beside the default rather than in
+# its place — see docs/tts-models.md.
+TTS_ENGINE="${TTS_ENGINE:-chatterbox}"
 [ -d "${ROOT}/voices/refs" ] || echo "  WARNING: ${ROOT}/voices/refs is missing — \
 the sidecar will have no reference clips and every improvised line will be a stranger"
-EXTRA=("$VOICES_MOUNT")
-start voicebot-tts localhost/voicebot-tts:latest 8802
+podman image exists "localhost/voicebot-tts:${TTS_ENGINE}" || echo "  WARNING: no image \
+localhost/voicebot-tts:${TTS_ENGINE} — build it with: make tts-build TTS_ENGINE=${TTS_ENGINE}"
+EXTRA=("$VOICES_MOUNT" -e "TTS_ENGINE=${TTS_ENGINE}")
+start voicebot-tts "localhost/voicebot-tts:${TTS_ENGINE}" 8802
 
 cat <<'NOTE'
 

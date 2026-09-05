@@ -12,6 +12,7 @@ import asyncio
 import io
 import json
 import logging
+import re
 import time
 import wave
 from pathlib import Path
@@ -146,7 +147,128 @@ async def health() -> JSONResponse:
         "voices": _voice_options(),
         "default_voice": _default_voice(),
         "knowledge": knowledge_policy.default_serving().describe,
+        # Which candidate model, if any, is speaking every line right now.
+        "tts_model": getattr(_lab(), "active", None),
     })
+
+
+# --------------------------------------------------------------- samples
+# Recordings to listen to without a model: the shipped voices and the
+# speakers they came from, plus whatever this machine has rendered.
+
+
+@app.get("/api/samples")
+async def list_samples() -> JSONResponse:
+    from . import samples
+
+    return JSONResponse({"samples": await asyncio.get_running_loop()
+                         .run_in_executor(None, samples.listing)})
+
+
+@app.get("/api/samples/{source}/{name}")
+async def get_sample(source: str, name: str) -> Response:
+    from . import samples
+
+    path = samples.resolve(f"{source}/{name}")
+    if path is None:
+        return Response(status_code=404)
+    return FileResponse(path, media_type="audio/wav",
+                        headers={"Cache-Control": "no-store"})
+
+
+# ----------------------------------------------------------- TTS models
+# The experiments switch. Nothing here touches the shipped path until a
+# model is selected; then every agent line goes through it, cache included,
+# because the point is to hear the candidate. See tts_models.py.
+
+
+def _lab():
+    return getattr(_backend(), "lab", None)
+
+
+@app.get("/api/tts/models")
+async def tts_models() -> JSONResponse:
+    lab = _lab()
+    if lab is None:
+        return JSONResponse({"active": None, "models": []})
+    models = await asyncio.get_running_loop().run_in_executor(None, lab.models)
+    return JSONResponse({"active": lab.active, "models": models})
+
+
+@app.post("/api/tts/model")
+async def tts_select(request: Request) -> JSONResponse:
+    """Select the model every line goes through, or clear it with a null id.
+
+    Fixed for the duration of a call like the voice and the register: a
+    speaker change mid-call is the thing a caller notices first, and here it
+    would also be a change of model.
+    """
+    lab = _lab()
+    if lab is None:
+        return JSONResponse({"error": "no TTS lab on this backend"}, status_code=501)
+    body = await request.json()
+    if _on_call():
+        return JSONResponse({"error": "finish the call first — the model is fixed "
+                                      "for its duration", "active": lab.active},
+                            status_code=409)
+    try:
+        lab.select(body.get("id") or None)
+    except KeyError:
+        return JSONResponse({"error": f"unknown model {body.get('id')!r}"}, status_code=404)
+    return JSONResponse({"active": lab.active})
+
+
+@app.post("/api/tts/say")
+async def tts_say(request: Request) -> Response:
+    """One line, in one model, as a wav — the "try it" box in the console.
+
+    `model` names a candidate; absent, the line goes down whatever path a
+    call would take (the selected model if there is one, else the shipped
+    path). Latency and the model that spoke come back in headers.
+    """
+    from .tts_models import Unavailable, Unsupported
+
+    body = await request.json()
+    text = " ".join(str(body.get("text") or "").split())
+    if not text:
+        return JSONResponse({"error": "nothing to say"}, status_code=400)
+    lang = str(body.get("lang") or ("zh" if any("一" <= c <= "鿿" for c in text) else "en"))
+    voice = body.get("voice") or _default_voice()
+    model = body.get("model") or None
+    lab = _lab()
+    backend = _backend()
+    try:
+        if model:
+            if lab is None:
+                return JSONResponse({"error": "no TTS lab on this backend"}, status_code=501)
+            sp = await lab.render(text, lang, voice, model)
+        else:
+            sp = await backend.speak(text, lang, prerendered=True, voice=voice)
+    except KeyError:
+        return JSONResponse({"error": f"unknown model {model!r}"}, status_code=404)
+    except Unsupported as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    except Unavailable as exc:
+        return JSONResponse({"error": str(exc)}, status_code=503)
+    if not sp.pcm:
+        return JSONResponse({"error": "no audio came back"}, status_code=502)
+    _state["last_audio"] = sp.pcm
+    # Kept, so it appears in the samples gallery beside the shipped ones:
+    # <model>--<voice>--<lang>--<a few words>.wav under voices/bench/say.
+    try:
+        from . import samples
+        slug = "-".join(re.sub(r"[^\w]+", " ", text).split()[:4]).lower()[:32] or "line"
+        samples.RENDERED.mkdir(parents=True, exist_ok=True)
+        keep = samples.RENDERED / f"{model or 'shipped'}--{voice or 'voice'}--{lang}--{slug}.wav"
+        keep.write_bytes(_wav_bytes(sp.pcm, sp.sample_rate))
+    except OSError as exc:                                  # pragma: no cover
+        log.warning("could not keep the rendered line: %s", exc)
+    return Response(content=_wav_bytes(sp.pcm, sp.sample_rate), media_type="audio/wav",
+                    headers={"Cache-Control": "no-store",
+                             "X-Model": model or (lab.active if lab and lab.active else "shipped"),
+                             "X-Latency-Ms": str(sp.latency_ms),
+                             "X-Voice-Source": str(getattr(sp, "voice_source", "")),
+                             "X-Lang": lang})
 
 
 # --------------------------------------------------------------- voices
@@ -190,6 +312,9 @@ def _voice_rows() -> list[dict]:
         refs = v.get("ref_audio")
         row = {"id": vid, "label": v.get("label", vid),
                "note": v.get("note", ""),
+               "gender": v.get("gender") or (
+                   "female" if float(for_language(v.get("target_f0"), "en") or 0) >= 165
+                   else "male"),
                "custom": mine is not None,
                "target_f0": float(for_language(v.get("target_f0"), "en") or 0),
                "mandarin": isinstance(refs, dict) and "zh" in refs}

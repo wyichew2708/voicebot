@@ -46,12 +46,21 @@ services:
       retries: 3
 
   tts:
+    # One image per engine (they do not share dependencies). TTS_ENGINE picks
+    # which model this box serves improvised lines with; the default is the
+    # checkpoint the cache was rendered with. To try another:
+    #   TTS_ENGINE=cosyvoice3 docker compose up -d --build tts
+    # See docs/tts-models.md for the candidates and their licences.
     build:
       context: .
       dockerfile: Dockerfile.tts
-    image: voicebot-tts:latest
+      args:
+        TTS_ENGINE: ${TTS_ENGINE:-chatterbox}
+    image: voicebot-tts:${TTS_ENGINE:-chatterbox}
     container_name: voicebot-tts
     <<: *gpu
+    environment:
+      TTS_ENGINE: ${TTS_ENGINE:-chatterbox}
     volumes:
       - ./voices:/app/voices:z
       - ${HF_HOME:-~/.cache/huggingface}:/root/.cache/huggingface:z
