@@ -271,9 +271,12 @@ def test_a_selected_model_bypasses_the_cache_on_the_gpu_box(sidecar, tmp_path, m
 # ------------------------------------------------------------- the console
 
 @pytest.fixture
-def client(tmp_path):
-    from voicebot import config, server
+def client(tmp_path, monkeypatch):
+    from voicebot import config, samples, server
 
+    # A line said through the API is kept for the gallery; keep it under the
+    # test's own directory rather than in the working tree.
+    monkeypatch.setattr(samples, "RENDERED", tmp_path / "say")
     cfg = config.load("mock")
     cfg.setdefault("backend", {}).setdefault("tts", {}).setdefault(
         "prerender", {"cache_dir": str(tmp_path / "cache"),
