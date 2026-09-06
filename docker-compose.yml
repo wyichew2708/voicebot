@@ -80,14 +80,104 @@ services:
       # Point at the Qwen3.6 replica reserved for voice. host.docker.internal
       # works on Docker Desktop; on Linux use the host IP or an external name.
       VOICEBOT_LLM_URL: ${LLM_URL:-http://host.docker.internal:8000}
+      # Where the console's "TTS model" switch finds each trial engine. The
+      # services below exist only under `--profile trial`; a name that is
+      # not running fails to resolve at once and is listed as not runnable.
+      VOICEBOT_TTS_SIDECARS: ${VOICEBOT_TTS_SIDECARS:-cosyvoice3=http://tts-cosyvoice3:8802,kokoro=http://tts-kokoro:8802,vibevoice=http://tts-vibevoice:8802,chatterbox-turbo=http://tts-chatterbox-turbo:8802,indextts2=http://tts-indextts2:8802,f5=http://tts-f5:8802}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
       # The pre-rendered cache is data, not code: mounted so it can be
       # regenerated without rebuilding, and shared with the TTS sidecar.
       - ./voices:/app/voices:z
+      # The listening gallery's shipped recordings. Read-only: what this
+      # machine renders goes under voices/bench/say, in the mount above.
+      - ./samples:/app/samples:ro,z
     ports: ["8788:8788"]
     depends_on:
       asr:
         condition: service_healthy
     restart: unless-stopped
+
+  # ---------------------------------------------------------------- trials
+  # One sidecar per candidate engine, for the console's "TTS model" switch
+  # (config/tts-models.yaml). Built and started only on request:
+  #
+  #     docker compose --profile trial up -d --build tts-cosyvoice3 tts-kokoro
+  #
+  # Each is its own image (the engines do not share dependencies) on its own
+  # port, beside the default sidecar rather than in its place — the cache was
+  # rendered by Chatterbox, and a trial engine on 8802 would put a different
+  # speaker on every improvised line of every call.
+
+  tts-cosyvoice3:
+    build: {context: ., dockerfile: Dockerfile.tts, args: {TTS_ENGINE: cosyvoice3}}
+    image: voicebot-tts:cosyvoice3
+    container_name: voicebot-tts-cosyvoice3
+    profiles: ["trial"]
+    <<: *gpu
+    environment: {TTS_ENGINE: cosyvoice3}
+    volumes:
+      - ./voices:/app/voices:z
+      - ${HF_HOME:-~/.cache/huggingface}:/root/.cache/huggingface:z
+    ports: ["127.0.0.1:8803:8802"]
+
+  tts-kokoro:
+    build: {context: ., dockerfile: Dockerfile.tts, args: {TTS_ENGINE: kokoro}}
+    image: voicebot-tts:kokoro
+    container_name: voicebot-tts-kokoro
+    profiles: ["trial"]
+    <<: *gpu
+    environment: {TTS_ENGINE: kokoro}
+    volumes:
+      - ./voices:/app/voices:z
+      - ${HF_HOME:-~/.cache/huggingface}:/root/.cache/huggingface:z
+    ports: ["127.0.0.1:8804:8802"]
+
+  tts-vibevoice:
+    build: {context: ., dockerfile: Dockerfile.tts, args: {TTS_ENGINE: vibevoice}}
+    image: voicebot-tts:vibevoice
+    container_name: voicebot-tts-vibevoice
+    profiles: ["trial"]
+    <<: *gpu
+    environment: {TTS_ENGINE: vibevoice}
+    volumes:
+      - ./voices:/app/voices:z
+      - ${HF_HOME:-~/.cache/huggingface}:/root/.cache/huggingface:z
+    ports: ["127.0.0.1:8805:8802"]
+
+  tts-chatterbox-turbo:
+    build: {context: ., dockerfile: Dockerfile.tts, args: {TTS_ENGINE: chatterbox-turbo}}
+    image: voicebot-tts:chatterbox-turbo
+    container_name: voicebot-tts-chatterbox-turbo
+    profiles: ["trial"]
+    <<: *gpu
+    environment: {TTS_ENGINE: chatterbox-turbo}
+    volumes:
+      - ./voices:/app/voices:z
+      - ${HF_HOME:-~/.cache/huggingface}:/root/.cache/huggingface:z
+    ports: ["127.0.0.1:8806:8802"]
+
+  tts-indextts2:
+    build: {context: ., dockerfile: Dockerfile.tts, args: {TTS_ENGINE: indextts2}}
+    image: voicebot-tts:indextts2
+    container_name: voicebot-tts-indextts2
+    profiles: ["trial"]
+    <<: *gpu
+    environment: {TTS_ENGINE: indextts2}
+    volumes:
+      - ./voices:/app/voices:z
+      - ${HF_HOME:-~/.cache/huggingface}:/root/.cache/huggingface:z
+    ports: ["127.0.0.1:8807:8802"]
+
+  tts-f5:
+    build: {context: ., dockerfile: Dockerfile.tts, args: {TTS_ENGINE: f5}}
+    image: voicebot-tts:f5
+    container_name: voicebot-tts-f5
+    profiles: ["trial"]
+    <<: *gpu
+    environment: {TTS_ENGINE: f5}
+    volumes:
+      - ./voices:/app/voices:z
+      - ${HF_HOME:-~/.cache/huggingface}:/root/.cache/huggingface:z
+    ports: ["127.0.0.1:8808:8802"]

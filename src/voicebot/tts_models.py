@@ -43,6 +43,23 @@ log = logging.getLogger("voicebot.tts_models")
 REGISTRY = CONFIG_DIR / "tts-models.yaml"
 SYSTEM_MODEL = ""          # the empty id: the shipped path, nothing selected
 
+#: The shipped clips, by gender and language. A profile without a voice map
+#: (config/mac.yaml has none: its live voice is a Kokoro preset) still has
+#: these to clone from, so a cloning model can be tried under any profile.
+DEFAULT_CLIPS = {
+    "male": {"en": "voices/refs/male.wav", "zh": "voices/refs/zm_yunjian.wav"},
+    "female": {"en": "voices/refs/female.wav", "zh": "voices/refs/zf_xiaobei.wav"},
+}
+_ROOT = Path(__file__).resolve().parents[2]
+
+
+def default_clip(gender: str, lang: str) -> str | None:
+    """The shipped clip for this gender and language, or None if the file
+    is not there (a checkout without voices/refs)."""
+    table = DEFAULT_CLIPS.get(gender) or DEFAULT_CLIPS["male"]
+    path = table.get(lang) or table.get("en")
+    return path if path and (_ROOT / path).exists() else None
+
 
 class Unsupported(ValueError):
     """The model cannot do what was asked — the wrong language, no clip."""
@@ -244,6 +261,7 @@ class MLXLab(Lab):
         self.sample_rate = sample_rate
         self._run = run                      # the backend's single MLX worker
         self._loaded: dict[str, Any] = {}
+        self._warned_default = False
 
     def availability(self, spec: ModelSpec) -> tuple[bool, str]:
         pkg = spec.mlx.get("package")
@@ -284,14 +302,24 @@ class MLXLab(Lab):
     def _render_sync(self, spec: ModelSpec, text: str, lang: str, voice: str | None) -> bytes:
         import numpy as np
 
+        gender = self._prerender.gender_for(voice)
         ref = self._prerender.reference_for(voice, lang) if spec.clone else None
         ref_text = self._prerender.reference_text_for(voice, lang) if spec.clone else None
-        gender = self._prerender.gender_for(voice)
+        if spec.clone and not ref:
+            # No clip on this voice — a profile without a voice map. Clone
+            # the shipped clip for the voice's gender rather than refuse.
+            ref = default_clip(gender, lang)
+            ref_text = None
+            if ref and not self._warned_default:
+                self._warned_default = True
+                log.info("voice %r has no reference clip; cloning the shipped %s clip",
+                         voice, gender)
         pieces = segment_by_script(text, lang)
         parts: list[bytes] = []
         if spec.mlx.get("package") == "f5-tts-mlx":
             for piece, piece_lang in pieces:
-                piece_ref = self._prerender.reference_for(voice, piece_lang) or ref
+                piece_ref = (self._prerender.reference_for(voice, piece_lang)
+                             or default_clip(gender, piece_lang) or ref)
                 parts.append(f5_mlx_piece(piece, piece_ref, ref_text, self.sample_rate))
             return _join(parts, self.sample_rate)
 
@@ -391,9 +419,16 @@ class SidecarLab(Lab):
     def _backend_for(self, url: str) -> Any:
         if url not in self._backends:
             from .runtime.cuda_backend import CUDABackend
+            pre = dict(self._tts_cfg.get("prerender") or {})
+            if not pre.get("voices"):
+                # No voice map on this profile: the shipped clips, by gender,
+                # so a cloning engine still has a speaker to copy.
+                pre["voices"] = {g: {"gender": g, "ref_audio": dict(clips)}
+                                 for g, clips in DEFAULT_CLIPS.items()}
+                pre.setdefault("default_voice", "male")
             cfg = {"sample_rate": self.sample_rate,
                    "tts": {"base_url": url, "lab": False,     # no lab inside a lab
-                           "prerender": dict(self._tts_cfg.get("prerender") or {})}}
+                           "prerender": pre}}
             self._backends[url] = CUDABackend(cfg)
         return self._backends[url]
 

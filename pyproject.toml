@@ -24,6 +24,7 @@ mlx = [
     "spacy>=3.8",            # misaki.en  (also needs: spacy download en_core_web_sm)
     "phonemizer-fork>=3.3",  # misaki.espeak
     "espeakng-loader>=0.2",  # misaki.espeak
+    "sentencepiece>=0.2",    # mlx-audio's IndexTTS-2 tokenizer; ImportError at load without it
 ]
 # Ingesting source documents into the knowledge bundle. Build-time only: the
 # served bundle is markdown and CSV, so nothing here is needed at runtime.

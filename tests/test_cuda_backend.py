@@ -189,9 +189,36 @@ def test_compose_does_not_start_the_llm():
 
     root = Path(__file__).resolve().parents[1]
     spec = yaml.safe_load((root / "docker-compose.yml").read_text())
-    assert set(spec["services"]) == {"asr", "tts", "console"}, list(spec["services"])
+    always = {n for n, s in spec["services"].items() if not s.get("profiles")}
+    assert always == {"asr", "tts", "console"}, sorted(always)
+    # Trial TTS engines exist only under `--profile trial`, one per engine
+    # the registry names, and none of them is an LLM either.
+    trials = {n: s for n, s in spec["services"].items() if s.get("profiles")}
+    assert trials and all(s["profiles"] == ["trial"] for s in trials.values())
+    assert all(n.startswith("tts-") for n in trials), sorted(trials)
     env = spec["services"]["console"]["environment"]
     assert "VOICEBOT_LLM_URL" in env, "the console must be told where the LLM is"
+    for n in trials:
+        assert f"{n[4:]}=http://{n}:8802" in env["VOICEBOT_TTS_SIDECARS"], n
+
+
+def test_the_console_container_can_see_the_samples_and_the_trial_sidecars():
+    """The gallery reads samples/ and the image deliberately leaves it out
+    (22 MB of audio that never changes with the code), so compose mounts it;
+    without the mount the LISTEN panel in the container is simply empty."""
+    from pathlib import Path
+
+    import yaml
+
+    root = Path(__file__).resolve().parents[1]
+    spec = yaml.safe_load((root / "docker-compose.yml").read_text())
+    assert "samples/" in (root / ".dockerignore").read_text()
+    assert any(v.startswith("./samples:/app/samples") for v in spec["services"]["console"]["volumes"])
+    # Every engine the registry can route to on the GPU box has a service.
+    from voicebot.tts_models import load_registry
+    engines = {m.gpu["engine"] for m in load_registry().values() if m.gpu}
+    assert {"cosyvoice3", "kokoro", "vibevoice", "chatterbox-turbo", "indextts2", "f5"} <= engines
+    assert {f"tts-{e}" for e in ("cosyvoice3", "kokoro", "vibevoice")} <= set(spec["services"])
 
 
 def test_voices_are_mounted_not_baked_into_the_image():

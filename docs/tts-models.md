@@ -59,6 +59,51 @@ catalogue; a file without an entry is still served with the gender guessed from 
 
 The switch is fixed for the duration of a call, like the voice and the register.
 
+## Where it runs, and what was checked
+
+The same console, registry, gallery and benchmark run on both targets. What differs is only
+where a model executes.
+
+| | MacBook (`make mac`, or the launchd agent on `mac-polyglot`) | GPU containers (`docker compose up`) |
+|---|---|---|
+| Console | in-process, MLX profile | `console` container, CPU-only image |
+| Shipped voice path | Kokoro live + Chatterbox cache, unchanged | Chatterbox sidecar + cache, unchanged |
+| Candidate models | `MLXLab`: mlx-audio in-process, two kept resident | `SidecarLab`: one container per engine under `--profile trial` |
+| Where each candidate's address comes from | nothing to configure | `VOICEBOT_TTS_SIDECARS` (set in compose to the trial service names) |
+| Gallery (`samples/`) | read from the checkout | mounted read-only into the console container |
+| Lines said in the SAY box | `voices/bench/say/` | same path, inside the `voices/` mount |
+| A profile with no voice map (`mac.yaml`) | cloning models copy the shipped clip for the picked gender | same, via the sidecar |
+
+```bash
+# GPU box: the default stack plus two trial engines, then open the console
+docker compose up -d --build
+docker compose --profile trial up -d --build tts-cosyvoice3 tts-kokoro
+# the console's TTS model switch now lists cosyvoice3 and kokoro as runnable;
+# the other trial engines say "sidecar … is not answering" until started
+```
+
+What was verified without a Mac or a GPU to hand, and what was not:
+
+- **The Mac code path, with a real model.** mlx-audio 0.5.1 installs on Linux with its CPU
+  backend, so `make tts-say MODEL=kokoro VOICE=female` was run for real through `MLXLab`: the
+  4-bit Kokoro loaded from the hub, took `voice=af_heart, lang_code=a`, produced 7 s of audio,
+  and the wav landed in the gallery. Slow on a Linux CPU (six minutes with the first-use load);
+  the same call on Apple silicon is the 0.2 s the README measures.
+- **The `generate` signatures of every mlx-audio family the registry names**, read from the
+  installed package: Kokoro takes `voice` and `lang_code`; Chatterbox takes `ref_audio`,
+  `lang_code`, `voice` and swallows `ref_text` in `**kwargs`; Chatterbox Turbo takes
+  `ref_audio`; VibeVoice takes `voice`; IndexTTS-2 takes `ref_audio`. Nothing the lab sends is
+  rejected. IndexTTS-2 additionally imports `sentencepiece`, now in the `[mlx]` extras — run
+  `make mlx` again after pulling.
+- **The console in a real browser**, headless Chromium against the mock profile: picker,
+  SAY, gallery filters, selection surviving a reload, no page errors.
+- **`docker compose config`** validates, with and without `--profile trial`; every branch of
+  `scripts/tts_engine_deps.sh` runs with `pip` and `git` stubbed.
+- **Not verified:** the images were not built (no Docker daemon in the sandbox) and no torch
+  engine ran. The adapters follow each project's current source, checked line by line, and
+  fail at boot naming the missing package or the wrong engine on a port rather than at the
+  first call — but the first GPU run is the first GPU run.
+
 ## The candidates in one table
 
 | Model | Engine | Weights licence | zh | ms | Clones a clip | Mac (MLX) | Fit for this product |

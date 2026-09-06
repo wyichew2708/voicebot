@@ -128,6 +128,27 @@ def test_the_mlx_lab_renders_a_mixed_line_piece_by_piece(monkeypatch, tmp_path):
     assert fake.calls[0]["ref_text"] == "Hello.", "the English clip's transcript travels"
 
 
+def test_a_profile_without_voices_still_clones_the_shipped_clip(monkeypatch, tmp_path):
+    """config/mac.yaml has no voice map (its live voice is a Kokoro preset).
+    A cloning model tried under it copies the shipped clip for the voice's
+    gender rather than refusing — the voice is what the picker offers, and
+    with no picker the default is the male clip."""
+    from voicebot.runtime.prerender import PrerenderCache
+
+    async def run(fn, *a):
+        return fn(*a)
+
+    fake = _FakeMLX()
+    lab = T.MLXLab(PrerenderCache({"cache_dir": str(tmp_path)}, 16000), 16000, run)
+    monkeypatch.setattr(lab, "_load", lambda repo: fake)
+    monkeypatch.setattr(lab, "availability", lambda spec: (True, ""))
+    asyncio.run(lab.render("就是续保的事。", "zh", None, "chatterbox"))
+    assert fake.calls[0]["ref_audio"] == "voices/refs/zm_yunjian.wav"
+    assert "ref_text" not in fake.calls[0]
+    assert T.default_clip("female", "en") == "voices/refs/female.wav"
+    assert T.default_clip("female", "ta") == "voices/refs/female.wav", "falls back to the English clip"
+
+
 def test_the_mlx_lab_refuses_the_wrong_language_before_loading_anything(monkeypatch, tmp_path):
     fake = _FakeMLX()
     lab = _mlx_lab(monkeypatch, tmp_path, fake)
@@ -235,6 +256,17 @@ def test_the_sidecar_lab_routes_a_model_to_its_engines_sidecar(sidecar, tmp_path
     sp = asyncio.run(lab.render("No problem.", "en", "male", "cosyvoice3"))
     assert sp.pcm and sp.voice_source == "trial:cosyvoice3"
     assert S.bodies[0]["lang"] == "en" and S.bodies[0]["ref_audio"] == "voices/refs/male.wav"
+
+
+def test_the_sidecar_lab_gives_a_voiceless_profile_the_shipped_clips(sidecar, tmp_path, monkeypatch):
+    url, S = sidecar
+    monkeypatch.setenv("VOICEBOT_TTS_SIDECARS", f"cosyvoice3={url}")
+    lab = T.SidecarLab({"prerender": {"cache_dir": str(tmp_path)}}, 16000)
+    asyncio.run(lab.render("No problem.", "en", "female", "cosyvoice3"))
+    assert S.bodies[-1]["ref_audio"] == "voices/refs/female.wav"
+    assert S.bodies[-1]["gender"] == "female"
+    asyncio.run(lab.render("没问题。", "zh", None, "cosyvoice3"))
+    assert S.bodies[-1]["ref_audio"] == "voices/refs/zm_yunjian.wav"
 
 
 def test_the_sidecar_lab_notices_the_wrong_engine_on_a_port(sidecar, tmp_path, monkeypatch):
