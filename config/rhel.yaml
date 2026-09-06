@@ -27,6 +27,11 @@ backend:
     # part of the pipeline flags.
     base_url: http://127.0.0.1:8802
     model: chatterbox-multilingual-v3
+    # How long one improvised line may take before the turn is abandoned.
+    # Not the 30 s the ASR and LLM share: the candidates behind this same
+    # contract are not all 0.5B, and a timeout here is a silent turn — the
+    # log says so, loudly, when it happens. VOICEBOT_TTS_TIMEOUT overrides.
+    timeout_s: 120
     # Candidate models for the console's "TTS model" switch, one sidecar
     # each, by engine name (config/tts-models.yaml). VOICEBOT_TTS_SIDECARS
     # adds to or overrides this. Empty here: the default sidecar above

@@ -97,7 +97,14 @@ What was verified without a Mac or a GPU to hand, and what was not:
   `make mlx` again after pulling.
 - **The console in a real browser**, headless Chromium against the mock profile: picker,
   SAY, gallery filters, selection surviving a reload, no page errors.
-- **The GPU-side path, end to end, with a real model.** Kokoro runs on CPU, so
+- **The default GPU engine, end to end.** `chatterbox` is what compose's `tts` service runs, so
+  a broken adapter there takes the whole deployment with it. Installed with its own deps arm and
+  driven through the real sidecar and `CUDABackend` on CPU: an English line cloned from the
+  female clip came back at 4.5 s and 230 Hz against that voice's 233 Hz target, and a Mandarin
+  line cloned from `zm_yunjian` at 2.6 s and 125 Hz. `ChatterboxMultilingualTTS` resolved in the
+  released wheel with `generate(text, language_id, audio_prompt_path=…, temperature=…)`, exactly
+  what the adapter sends.
+- **A trial GPU engine, end to end.** Kokoro runs on CPU, so
   `scripts/tts_engine_deps.sh kokoro` installed it for real and the actual sidecar was started
   and driven through `CUDABackend` and `SidecarLab` — the code the RHEL box runs, not a stub.
   `/health` reported the engine; an English line came back at 5.2 s and 227 Hz and a
@@ -106,13 +113,19 @@ What was verified without a Mac or a GPU to hand, and what was not:
   runnable and `cosyvoice3` as "no sidecar for engine"; the female preset came back at 222 Hz
   against the male's 125 Hz; and Malay was refused rather than mispronounced.
 - **`docker compose config`** validates, with and without `--profile trial`.
-- **Two bugs this found**, both of the kind that only appear when you run it. `uv venv` puts no
+- **Three bugs this found**, all of the kind that only appear when you run it. `uv venv` puts no
   `pip` in a venv and this repo builds every venv with uv, so the documented
   `PIP=<venv>/bin/pip` could not work: the script now takes `VENV=` and resolves the installer
   itself, failing at once with the fix named. And Kokoro's English front end loads spaCy's
   `en_core_web_sm`, which is not a pip dependency of anything it installs — the sidecar booted,
   reported healthy, and returned HTTP 500 on every English line. The deps script now installs
-  it, and the engine names the fix rather than passing spaCy's `E050` up.
+  it, and the engine names the fix rather than passing spaCy's `E050` up. And the backend gave
+  the TTS sidecar the same 30-second budget as the ASR and the LLM, then returned **empty audio**
+  when it ran out — a silent turn that nothing downstream can tell from a quiet line. The TTS
+  budget is now its own (`backend.tts.timeout_s`, `VOICEBOT_TTS_TIMEOUT`, default 120 s), which
+  matters because the candidates behind that contract are not all 0.5B: IndexTTS-2 is 1.7B and
+  Fish S2 about 5B. A failure now logs at error, saying the turn will be silent and naming the
+  budget that ran out.
 - **Not verified:** the images were not built (no Docker daemon in the sandbox), and CUDA
   itself never ran. Every other engine's adapter follows its project's current source, checked
   line by line against the released wheels where they exist.

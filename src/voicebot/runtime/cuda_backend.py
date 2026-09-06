@@ -20,6 +20,7 @@ import asyncio
 import io
 import json
 import logging
+import os
 import time
 import urllib.error
 import urllib.request
@@ -32,7 +33,16 @@ from .base import Backend, BackendHealth, Completion, Speech, TranscriptResult
 
 log = logging.getLogger("voicebot.cuda")
 
+#: How long to wait on the ASR and LLM services.
 TIMEOUT = 30
+#: And on the TTS sidecar, which is a different question. The incumbent
+#: renders a line in well under a second on a GPU, but the candidates behind
+#: the same contract are not all 0.5B — IndexTTS-2 is 1.7B and Fish S2 about
+#: 5B — and a box serving several at once is slower still. Measured here: the
+#: default Chatterbox engine on CPU took past 30 s for one line and the turn
+#: came back as silence. Override per deployment with `backend.tts.timeout_s`
+#: or VOICEBOT_TTS_TIMEOUT.
+TTS_TIMEOUT = 120
 
 
 class CUDABackend(Backend):
@@ -43,6 +53,8 @@ class CUDABackend(Backend):
         # Requests are blocking urllib calls; a small pool keeps them off the
         # event loop without pulling in another dependency.
         self._pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="cuda-http")
+        self.tts_timeout = float(cfg.get("tts", {}).get("timeout_s")
+                                 or os.environ.get("VOICEBOT_TTS_TIMEOUT") or TTS_TIMEOUT)
         from .prerender import PrerenderCache
         self.prerender = PrerenderCache(cfg.get("tts", {}).get("prerender", {}),
                                         self.sample_rate)
@@ -61,11 +73,12 @@ class CUDABackend(Backend):
 
     @staticmethod
     def _post(url: str, data: bytes, content_type: str,
-              headers: dict[str, str] | None = None) -> bytes:
+              headers: dict[str, str] | None = None,
+              timeout: float = TIMEOUT) -> bytes:
         req = urllib.request.Request(url, data=data, method="POST",
                                      headers={"Content-Type": content_type,
                                               **(headers or {})})
-        with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
             return resp.read()
 
     def _wav(self, pcm: bytes) -> bytes:
@@ -195,7 +208,8 @@ class CUDABackend(Backend):
             body["ref_text"] = ref_text
         if gender:
             body["gender"] = gender          # for engines that pick a preset
-        raw = self._post(url, json.dumps(body).encode(), "application/json")
+        raw = self._post(url, json.dumps(body).encode(), "application/json",
+                         timeout=self.tts_timeout)
         with wave.open(io.BytesIO(raw)) as w:
             if w.getframerate() != self.sample_rate:
                 log.warning("TTS returned %d Hz, expected %d",
@@ -238,8 +252,16 @@ class CUDABackend(Backend):
 
         try:
             pcm = await self._run(_work)
-        except Exception as exc:                        # pragma: no cover
-            log.warning("TTS request failed: %s", exc)
+        except Exception as exc:
+            # Nothing downstream can tell empty audio from a quiet line, so
+            # say plainly that this turn will be silent and why. A timeout is
+            # the likely one on a slow or overloaded engine — name the budget
+            # so the fix (backend.tts.timeout_s) is obvious from the log.
+            log.error("TTS failed, this turn will be SILENT: %s "
+                      "(engine %s, %.0fs budget — raise backend.tts.timeout_s "
+                      "or VOICEBOT_TTS_TIMEOUT if it needs longer)",
+                      exc, (self._sidecar_health() or {}).get("engine", "?"),
+                      self.tts_timeout)
             return
         frame = int(self.sample_rate * 0.02) * 2        # 20 ms of int16
         for i in range(0, len(pcm), frame):

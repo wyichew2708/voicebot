@@ -154,6 +154,55 @@ def test_health_is_ready_when_asr_serves_the_configured_model(stub):
     assert CUDABackend(_cfg(url)).health().ready
 
 
+def test_the_tts_budget_is_its_own_and_configurable(stub, monkeypatch):
+    """The candidates behind the /tts contract are not all 0.5B — IndexTTS-2
+    is 1.7B, Fish about 5B — and the 30 s the ASR and LLM share is not
+    necessarily theirs. Measured: the default engine on CPU ran past 30 s and
+    the turn came back as silence."""
+    from voicebot.runtime import cuda_backend as CB
+
+    url, _ = stub
+    monkeypatch.delenv("VOICEBOT_TTS_TIMEOUT", raising=False)
+    assert CB.CUDABackend(_cfg(url)).tts_timeout == CB.TTS_TIMEOUT > CB.TIMEOUT
+
+    cfg = _cfg(url)
+    cfg["tts"]["timeout_s"] = 45
+    assert CB.CUDABackend(cfg).tts_timeout == 45
+    monkeypatch.setenv("VOICEBOT_TTS_TIMEOUT", "300")
+    assert CB.CUDABackend(_cfg(url)).tts_timeout == 300
+
+
+def test_the_tts_budget_reaches_the_request_and_asr_keeps_its_own(stub):
+    url, _ = stub
+    cfg = _cfg(url)
+    cfg["tts"]["timeout_s"] = 77
+    be = CUDABackend(cfg)
+    seen = []
+    real = be._post
+
+    def spy(u, data, ctype, headers=None, timeout=30):
+        seen.append((u.rsplit("/", 1)[-1], timeout))
+        return real(u, data, ctype, headers, timeout)
+
+    be._post = spy
+    asyncio.run(_drain(be.synthesize("No problem.", "en", "male")))
+    asyncio.run(be.transcribe(b"\x00\x00" * 1600, 16000))
+    assert ("tts", 77) in seen, seen
+    assert ("transcriptions", 30) in seen, seen
+
+
+def test_a_failed_tts_says_the_turn_will_be_silent(caplog):
+    """Empty audio is indistinguishable from a quiet line anywhere
+    downstream, so the log has to be the thing that says it."""
+    import logging
+
+    be = CUDABackend(_cfg("http://127.0.0.1:9"))     # discard port: nothing there
+    with caplog.at_level(logging.ERROR, logger="voicebot.cuda"):
+        pcm = asyncio.run(_drain(be.synthesize("No problem.", "en", "male")))
+    assert pcm == b""
+    assert "SILENT" in caplog.text and "timeout_s" in caplog.text
+
+
 # ------------------------------------------------------- container contract
 
 def test_env_overrides_reach_the_config():
