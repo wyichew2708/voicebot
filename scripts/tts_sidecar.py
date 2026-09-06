@@ -148,9 +148,19 @@ class ChatterboxTurbo(Engine):
     needs = "pip install chatterbox-tts  (>= the release that ships chatterbox.tts_turbo)"
     nano = False
 
-    def load(self, device: str) -> None:            # pragma: no cover - model
+    def load(self, device: str) -> None:
         from chatterbox.tts_turbo import ChatterboxTurboTTS
-        _state["m"] = ChatterboxTurboTTS.from_pretrained(device=device, nano=self.nano)
+        # The released wheel (0.1.7) takes only `device`; the `nano` switch is
+        # on the repository's main branch. Ask for it, and if the package
+        # does not know it, Turbo loads anyway and Nano says what it needs.
+        try:
+            _state["m"] = ChatterboxTurboTTS.from_pretrained(device=device, nano=self.nano)
+        except TypeError:
+            if self.nano:
+                raise RuntimeError(
+                    "this chatterbox-tts release has no Nano model: install it from the "
+                    "repository (pip install git+https://github.com/resemble-ai/chatterbox)")
+            _state["m"] = ChatterboxTurboTTS.from_pretrained(device=device)
 
     def synth(self, text, lang, ref, ref_text):
         model = _state["m"]

@@ -285,6 +285,42 @@ def test_an_english_only_engine_refuses_a_mandarin_line(monkeypatch):
     assert seen[0][1]["audio_prompt_path"].endswith("voices/refs/male.wav")
 
 
+def test_turbo_loads_on_the_released_wheel_and_nano_says_what_it_needs(monkeypatch):
+    """chatterbox-tts 0.1.7 on PyPI has ChatterboxTurboTTS.from_pretrained(device)
+    and no `nano` — that switch is only on the repository's main branch.
+    Turbo must still load; Nano must fail naming the install, not TypeError."""
+    mod = _sidecar()
+    seen: list = []
+
+    class _Released:
+        @classmethod
+        def from_pretrained(cls, device):
+            seen.append(device)
+            return cls()
+
+    monkeypatch.setitem(sys.modules, "chatterbox", types.SimpleNamespace())
+    monkeypatch.setitem(sys.modules, "chatterbox.tts_turbo",
+                        types.SimpleNamespace(ChatterboxTurboTTS=_Released))
+    monkeypatch.setitem(mod._state, "dev", "cpu")
+    mod.ChatterboxTurbo().load("cpu")
+    assert seen == ["cpu"] and isinstance(mod._state["m"], _Released)
+    mod._state.pop("m")
+    with pytest.raises(RuntimeError) as e:
+        mod.ChatterboxNano().load("cpu")
+    assert "Nano" in str(e.value) and "git+" in str(e.value)
+
+    class _Main(_Released):
+        @classmethod
+        def from_pretrained(cls, device, nano=False):
+            seen.append((device, nano))
+            return cls()
+
+    monkeypatch.setitem(sys.modules, "chatterbox.tts_turbo",
+                        types.SimpleNamespace(ChatterboxTurboTTS=_Main))
+    mod.ChatterboxNano().load("cuda")
+    assert seen[-1] == ("cuda", True)
+
+
 def test_a_cloning_engine_without_a_clip_says_so(monkeypatch):
     """Not the model's default speaker: a stranger mid-call is the failure
     every reference-clip rule in this repo exists to prevent."""
