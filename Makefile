@@ -130,13 +130,15 @@ tts-say:              ## one line in one model:  make tts-say MODEL=cosyvoice3 T
 tts-engines:          ## list the engines the GPU sidecar can serve
 	$(PY) scripts/tts_sidecar.py --list-engines
 
-tts-deps:             ## install one engine's dependencies into this venv:  make tts-deps TTS_ENGINE=f5
-	PIP="$(VENV)/bin/pip" TTS_ENGINE_PREFIX=$(CURDIR)/models ./scripts/tts_engine_deps.sh $(TTS_ENGINE)
+tts-deps:             ## install one engine into its own venv:  make tts-deps TTS_ENGINE=f5
+	uv venv $(VENV)-tts-$(TTS_ENGINE) --python 3.11
+	VENV=$(VENV)-tts-$(TTS_ENGINE) TTS_ENGINE_PREFIX=$(CURDIR)/models ./scripts/tts_engine_deps.sh $(TTS_ENGINE)
+	@echo "run it:  make tts-sidecar TTS_ENGINE=$(TTS_ENGINE) TTS_PORT=8803"
 
 tts-sidecar:          ## run the sidecar here with one engine:  make tts-sidecar TTS_ENGINE=cosyvoice3 TTS_PORT=8803
 	COSYVOICE_HOME=$(CURDIR)/models/CosyVoice INDEXTTS_HOME=$(CURDIR)/models/index-tts \
 	FISH_HOME=$(CURDIR)/models/fish-speech VIBEVOICE_HOME=$(CURDIR)/models/VibeVoice \
-	$(PY) scripts/tts_sidecar.py --engine $(TTS_ENGINE) --port $(TTS_PORT)
+	$(VENV)-tts-$(TTS_ENGINE)/bin/python scripts/tts_sidecar.py --engine $(TTS_ENGINE) --port $(TTS_PORT)
 
 tts-build:            ## build the GPU sidecar image for one engine:  make tts-build TTS_ENGINE=cosyvoice3
 	docker build -f Dockerfile.tts --build-arg TTS_ENGINE=$(TTS_ENGINE) -t voicebot-tts:$(TTS_ENGINE) .

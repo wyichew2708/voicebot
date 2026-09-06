@@ -428,6 +428,68 @@ def test_a_preset_voice_engine_picks_the_speaker_by_language(monkeypatch):
     assert r.status_code == 400, "Malay is not a language this engine has a preset for"
 
 
+def test_kokoro_says_what_is_missing_when_spacy_has_no_model(monkeypatch):
+    """misaki loads en_core_web_sm lazily, so a missing spaCy model does not
+    stop the sidecar booting or reporting healthy — it 500s on the first
+    English line. Verified for real: the engine ran, /health said ready, and
+    every English request failed. The reply now names the install."""
+    mod = _sidecar()
+
+    class _Pipe:
+        def __call__(self, text, voice):
+            raise OSError("[E050] Can't find model 'en_core_web_sm'. It doesn't seem "
+                          "to be a Python package or a valid path to a data directory.")
+
+    from fastapi.testclient import TestClient
+    monkeypatch.setitem(mod._state, "m", {"a": _Pipe()})
+    monkeypatch.setitem(mod._state, "dev", "cpu")
+    monkeypatch.setitem(mod._state, "engine_name", "kokoro")
+    r = TestClient(mod.app).post("/tts", json={"text": "Hello.", "lang": "en", "voice": "male"})
+    assert r.status_code == 400
+    assert "en_core_web_sm" in r.text and "tts_engine_deps.sh" in r.text
+    # Any other OSError is still an error, not a misdiagnosis.
+    class _Broken:
+        def __call__(self, text, voice):
+            raise OSError("disk went away")
+    monkeypatch.setitem(mod._state, "m", {"a": _Broken()})
+    with pytest.raises(OSError, match="disk went away"):
+        TestClient(mod.app, raise_server_exceptions=True).post(
+            "/tts", json={"text": "Hello.", "lang": "en", "voice": "male"})
+
+
+def test_the_deps_script_resolves_an_installer_for_a_uv_venv(tmp_path):
+    """`uv venv` puts no `pip` in a venv and this repo builds every venv with
+    uv, so PIP=<venv>/bin/pip — which the docs used to say — cannot work.
+    VENV= resolves the right installer, and an unusable one fails at once
+    naming the fix rather than part-way through a case arm."""
+    import subprocess
+
+    script = str(ROOT / "scripts/tts_engine_deps.sh")
+
+    def run(engine="kokoro", **env):
+        import os
+        return subprocess.run(["bash", script, engine], capture_output=True, text=True,
+                              cwd=ROOT, env={**os.environ, **env})
+
+    r = run(VENV=str(tmp_path / "nope"))
+    assert r.returncode == 2 and "uv venv" in r.stderr
+
+    r = run(PIP="/nonexistent/pip")
+    assert r.returncode == 2 and "cannot run the installer" in r.stderr
+
+    # A venv with a pip in it is used directly; the arm's package list is
+    # reached, which is all this needs to show.
+    venv = tmp_path / "v"
+    (venv / "bin").mkdir(parents=True)
+    for name in ("python", "pip"):
+        f = venv / "bin" / name
+        f.write_text("#!/bin/sh\necho \"[$0] $*\"\n")
+        f.chmod(0o755)
+    r = run(VENV=str(venv))
+    assert r.returncode == 0, r.stderr
+    assert "kokoro" in r.stdout and "misaki[en,zh]" in r.stdout
+
+
 def test_listing_engines_needs_no_model(capsys):
     """`--list-engines` is documentation; it must work on a laptop with
     nothing installed, which is where someone decides what to try."""

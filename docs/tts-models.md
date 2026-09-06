@@ -97,12 +97,25 @@ What was verified without a Mac or a GPU to hand, and what was not:
   `make mlx` again after pulling.
 - **The console in a real browser**, headless Chromium against the mock profile: picker,
   SAY, gallery filters, selection surviving a reload, no page errors.
-- **`docker compose config`** validates, with and without `--profile trial`; every branch of
-  `scripts/tts_engine_deps.sh` runs with `pip` and `git` stubbed.
-- **Not verified:** the images were not built (no Docker daemon in the sandbox) and no torch
-  engine ran. The adapters follow each project's current source, checked line by line, and
-  fail at boot naming the missing package or the wrong engine on a port rather than at the
-  first call — but the first GPU run is the first GPU run.
+- **The GPU-side path, end to end, with a real model.** Kokoro runs on CPU, so
+  `scripts/tts_engine_deps.sh kokoro` installed it for real and the actual sidecar was started
+  and driven through `CUDABackend` and `SidecarLab` — the code the RHEL box runs, not a stub.
+  `/health` reported the engine; an English line came back at 5.2 s and 227 Hz and a
+  mixed-script Mandarin line at 6.3 s and 134 Hz, both on the profile's own target pitches, so
+  the segmentation and pitch normalisation survive the HTTP hop; the lab listed `kokoro` as
+  runnable and `cosyvoice3` as "no sidecar for engine"; the female preset came back at 222 Hz
+  against the male's 125 Hz; and Malay was refused rather than mispronounced.
+- **`docker compose config`** validates, with and without `--profile trial`.
+- **Two bugs this found**, both of the kind that only appear when you run it. `uv venv` puts no
+  `pip` in a venv and this repo builds every venv with uv, so the documented
+  `PIP=<venv>/bin/pip` could not work: the script now takes `VENV=` and resolves the installer
+  itself, failing at once with the fix named. And Kokoro's English front end loads spaCy's
+  `en_core_web_sm`, which is not a pip dependency of anything it installs — the sidecar booted,
+  reported healthy, and returned HTTP 500 on every English line. The deps script now installs
+  it, and the engine names the fix rather than passing spaCy's `E050` up.
+- **Not verified:** the images were not built (no Docker daemon in the sandbox), and CUDA
+  itself never ran. Every other engine's adapter follows its project's current source, checked
+  line by line against the released wheels where they exist.
 
 ## The candidates in one table
 
@@ -250,7 +263,7 @@ TTS_ENGINE=vibevoice docker compose up -d --build tts
 
 # bare host: one venv per engine, then the sidecar on its own port
 uv venv .venv-cosy --python 3.11
-PIP=.venv-cosy/bin/pip TTS_ENGINE_PREFIX=$PWD/models ./scripts/tts_engine_deps.sh cosyvoice3
+VENV=.venv-cosy TTS_ENGINE_PREFIX=$PWD/models ./scripts/tts_engine_deps.sh cosyvoice3
 COSYVOICE_HOME=$PWD/models/CosyVoice .venv-cosy/bin/python scripts/tts_sidecar.py --engine cosyvoice3 --port 8803
 ```
 

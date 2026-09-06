@@ -337,8 +337,19 @@ class Kokoro(Engine):
 
     def synth(self, text, lang, ref, ref_text, gender: str = "male"):
         import numpy as np
-        parts = [_tensor_audio(audio) for _gs, _ps, audio in
-                 self._pipeline(lang)(text, voice=self.preset(gender, lang))]
+        try:
+            parts = [_tensor_audio(audio) for _gs, _ps, audio in
+                     self._pipeline(lang)(text, voice=self.preset(gender, lang))]
+        except OSError as exc:
+            # spaCy's "E050 Can't find model 'en_core_web_sm'". misaki loads
+            # it lazily, so this lands on the first English line rather than
+            # at boot; say what to install instead of passing E050 up.
+            if "en_core_web_sm" not in str(exc):
+                raise
+            raise Unsupported(
+                f"{self.name}: misaki's English G2P needs spaCy's en_core_web_sm, which "
+                "is not a pip dependency. Re-run scripts/tts_engine_deps.sh kokoro, or "
+                "install it: python -m spacy download en_core_web_sm") from exc
         audio = np.concatenate(parts) if parts else np.zeros(0, dtype=np.float32)
         return audio, 24000
 

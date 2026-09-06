@@ -7,7 +7,7 @@
 # Dockerfile.tts calls this with its TTS_ENGINE build argument; it also runs by
 # hand into a venv on a GPU host:
 #
-#     PIP=".venv-tts/bin/pip" ./scripts/tts_engine_deps.sh cosyvoice3
+#     VENV=.venv-tts ./scripts/tts_engine_deps.sh cosyvoice3
 #
 # Model weights are NOT downloaded here: they land in the HF cache on first
 # start, which docker-compose.yml and deploy/rhel/services.sh mount from the
@@ -15,7 +15,47 @@
 set -euo pipefail
 
 ENGINE="${1:-${TTS_ENGINE:-chatterbox}}"
+
+# Where to install. Give VENV a virtualenv and the right installer is worked
+# out for it: `uv pip --python` when uv is on the PATH, else the venv's own
+# `python -m pip`. This repo builds its venvs with `uv venv`, which does NOT
+# put a `pip` binary in them — pointing PIP at .venv/bin/pip fails with
+# "No such file or directory", which is what this exists to prevent.
+#
+#     VENV=.venv-tts ./scripts/tts_engine_deps.sh kokoro    # recommended
+#     PIP="python3.11 -m pip" ./scripts/tts_engine_deps.sh kokoro   # a plain host
+#
+# In the container there is no venv at all and the default is right.
+if [ -n "${VENV:-}" ]; then
+  [ -x "$VENV/bin/python" ] || {
+    echo "no interpreter at $VENV/bin/python — create it first: uv venv $VENV --python 3.11" >&2
+    exit 2
+  }
+  if [ -x "$VENV/bin/pip" ]; then
+    PIP="${PIP:-$VENV/bin/pip}"
+  elif command -v uv >/dev/null 2>&1; then
+    # uv takes --python only *after* the subcommand, which does not fit the
+    # `$PIP install …` shape the arms below use; VIRTUAL_ENV targets it just
+    # as well, and uv accepts pip's --no-cache-dir.
+    VIRTUAL_ENV="$(cd "$VENV" && pwd)"
+    export VIRTUAL_ENV
+    PIP="${PIP:-uv pip}"
+  else
+    PIP="${PIP:-$VENV/bin/python -m pip}"
+  fi
+fi
 PIP="${PIP:-python3.11 -m pip}"
+PYBIN="${PYBIN:-${VENV:+$VENV/bin/python}}"
+PYBIN="${PYBIN:-python3.11}"
+
+# Fail here, naming the fix, rather than three lines into a case arm. `list`
+# is the one no-op every form above understands.
+if ! $PIP list >/dev/null 2>&1; then
+  echo "cannot run the installer: $PIP" >&2
+  echo "  pass VENV=<dir> for a virtualenv, or PIP='<python> -m pip' for a host interpreter." >&2
+  exit 2
+fi
+
 # Where repository-shaped engines are cloned. The sidecar reads the same
 # variables at run time (COSYVOICE_HOME, INDEXTTS_HOME), so keep them in step.
 PREFIX="${TTS_ENGINE_PREFIX:-/opt}"
@@ -58,6 +98,15 @@ case "$ENGINE" in
     # loader is the English fallback G2P, which otherwise fails at first
     # synthesis rather than at install.
     $PIP install --no-cache-dir torch kokoro "misaki[en,zh]" espeakng-loader "${common[@]}"
+    # misaki's English G2P loads spaCy's en_core_web_sm, which is NOT a pip
+    # dependency of anything above. Without it the sidecar starts, reports
+    # itself healthy, and then 500s on the first English line — the failure
+    # this repo's pyproject already warns about on the Mac side. Installed
+    # by URL rather than `spacy download`, which shells out to pip and so
+    # does not work inside a uv-made venv.
+    sp="$($PYBIN -c 'import spacy; print(spacy.__version__.rsplit(".", 1)[0])')"
+    $PIP install --no-cache-dir \
+      "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-${sp}.0/en_core_web_sm-${sp}.0-py3-none-any.whl"
     ;;
   fish)
     # Research licence. Installed from the repository, which pins its own
