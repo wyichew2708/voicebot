@@ -299,3 +299,80 @@ empty and every improvised line is a stranger's voice. The script now mounts it 
 | Mandarin sounds flat, English fine | Mandarin clips missing, so it fell back to the English one | `make test` — `test_mandarin_voice.py` covers it |
 | Console starts but calls fail | a service is up on the port but serving the wrong model | `/api/health` reports `ready` from `/v1/models`, not liveness |
 | Coverage questions all become callbacks | `unsourced_answers: refuse`, as this profile ships | `/api/health` → `knowledge`; **this is correct behaviour** |
+
+---
+
+## Trying another voice (2026-09-07)
+
+Eight TTS models are now selectable at runtime, on both targets, without editing config or
+restarting anything. The switch is in the console — *TTS model — experiment* — and the point of it
+is that the incumbent is a choice rather than a default nobody has tested against.
+
+**One registry, two platforms.** `config/tts-models.yaml` is the whole vocabulary. Each entry says
+what the model is called, which languages it will actually speak, whether it clones a reference clip
+or holds preset speakers, and how to reach it on each target:
+
+```yaml
+kokoro:
+  languages: [en, zh]
+  clone: false
+  speaker:
+    male:   {en: am_michael, zh: zm_yunjian}
+    female: {en: af_heart,   zh: zf_xiaobei}
+  mlx: {repo: mlx-community/Kokoro-82M-4bit}   # Mac: in-process
+  gpu: {engine: kokoro}                        # RHEL: its own sidecar
+```
+
+`src/voicebot/tts_models.py` turns that into a *lab* per platform: `MLXLab` loads the model in
+process and keeps two resident, `SidecarLab` routes each model to the sidecar serving its engine.
+Both backends' `speak()` calls the same override hook first, so the switch reaches every improvised
+line and nothing else in the pipeline learns which model is talking.
+
+| | MacBook (`mlx`) | RHEL (`cuda`) |
+|---|---|---|
+| How a model runs | in-process, mlx-audio | one sidecar per engine |
+| Where it comes from | `mlx:` repo id, downloaded on first use | `gpu:` engine name, built into an image |
+| Switching cost | a model load (seconds, then cached) | none — the sidecars are already up |
+| Bringing one up | `make tts-deps` / nothing | `docker compose --profile trial up -d --build tts-kokoro` |
+
+**The trial sidecars are opt-in.** Six `tts-<engine>` services sit behind compose's `trial` profile
+on ports 8803–8808, so `docker compose up -d` still starts exactly what it started before. The
+console is told where they are through `VOICEBOT_TTS_SIDECARS`, which compose pre-wires.
+
+**A selected model takes the whole call, cache and all.** Pick one and every line of the next call
+is spoken by it — the scripted turns bypass the pre-rendered cache, because the reason to try a
+model is to hear it on the lines a customer actually gets, not only on the improvised ones. So the
+switch is a bench control, not a deployment setting: the default position renders nothing new and
+serves the cache exactly as before, and the console refuses to change model mid-call (409) rather
+than swapping voices on a caller. Leave it on the default for anything a customer will hear.
+
+**Licences are recorded, not enforced.** Several candidates are non-commercial or research-licensed
+(F5-TTS's weights are CC-BY-NC-4.0; Fish S2 is research-only) and three are English-only. The
+registry carries the language list and the sidecar refuses a language a model cannot speak, but
+nothing stops a non-commercial model being selected — this is an experiments bench. Read
+[tts-models.md](tts-models.md) before pointing a real call at anything but the default.
+
+### Hearing them
+
+`make tts-bench` runs a 78-sentence Singapore insurance set — premiums, NRIC fragments, addresses,
+mixed English/Mandarin lines — through any set of models or sidecar addresses and reports latency,
+real-time factor, failures, speaker drift in semitones and character error rate. Whatever it renders
+is kept, and the console's *Voice samples → LISTEN* panel plays the lot, filtered female/male, so a
+choice can be made by ear as well as by table.
+
+### What was actually run
+
+The Mac path was run in full on CPU (mlx-audio has one): Kokoro through `MLXLab` for female EN,
+female ZH and male EN. The GPU path was run with the real deps script, the real sidecar process and
+the real `CUDABackend` — Kokoro and the default Chatterbox, gender routing verified by measured
+pitch (222 Hz female against 125 Hz male), Malay correctly refused. **CUDA itself and the container
+images are still unverified**: `docker compose config` validates with and without `--profile trial`,
+but no image has been built here.
+
+Three defects came out of that run and are fixed:
+
+| What broke | Why it was invisible | Fix |
+|---|---|---|
+| The dependency script installed nothing | the documented `PIP=<venv>/bin/pip` cannot work — `uv venv` installs no `pip` | `VENV=` resolves an installer, and the script exits 2 if it cannot find one |
+| Every English line 500'd on Kokoro | its front end needs spaCy's `en_core_web_sm`, which is not a pip dependency of anything — so the sidecar booted and reported healthy | the deps arm installs the wheel by URL; the engine catches the error and names the fix |
+| A slow engine produced a silent turn | TTS shared the 30 s ASR/LLM budget and an exceeded budget returned empty audio | TTS has its own `timeout_s` (120 s default) and logs `this turn will be SILENT` with the engine and the budget |

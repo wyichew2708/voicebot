@@ -634,10 +634,14 @@ experiments end.
 served. Liveness alone is not enough: during development an unrelated process on port 8801 answered
 404s, which an is-it-up probe read as ready — the console would have started calls against nothing.
 
-⚠ **Untested on real hardware.** There is no NVIDIA GPU on this machine, so the CUDA backend is
+⚠ **No GPU has ever run this.** There is no NVIDIA hardware on this machine. The backend is
 exercised against a stub of the three services (`tests/test_cuda_backend.py` — request shapes, cache
-short-circuit, readiness). Everything except the GPU itself is covered; the first run on the box is
-still the first run on the box.
+short-circuit, readiness), and the sidecar half has since been driven for real on CPU: the actual
+`tts_sidecar.py` process, loading actual weights, answering an actual `CUDABackend`. That run found
+three defects the stub could not (a venv with no `pip`, a missing spaCy model that let a sidecar
+report healthy and then fail every line, and a 30 s timeout that turned a slow engine into a silent
+turn). What remains unverified is CUDA itself and the container images — neither has been built
+here. The first run on the box is still the first run on the box.
 
 ## Layout
 
@@ -649,6 +653,9 @@ src/voicebot/
     mlx_backend.py  Apple Silicon (mlx-lm + mlx-audio)
     cuda_backend.py RHEL GPU — HTTP to vLLM services, no in-process models
     prerender.py    cache for scripted turns; keys are platform-independent
+  tts_models.py   the switchable TTS candidates; one lab per platform
+  samples.py      the listening gallery behind the console's LISTEN panel
+  tts_bench.py    the Singapore sentence set: latency, RTF, drift, CER
   call/
     script.py       the seven scripted turns, EN + ZH, with slot filling
     engine.py       call state machine; emits events, never touches models
@@ -665,7 +672,9 @@ src/voicebot/
   events.py         the event vocabulary the console renders
   server.py         FastAPI + websocket
 ui/demo-console.html  operator console — live over websocket, or self-simulating
-config/               mock.yaml, mac.yaml
+config/               mock.yaml, mac.yaml, rhel.yaml, tts-models.yaml
+samples/              catalogued recordings the LISTEN panel plays (index.yaml)
+scripts/tts_sidecar.py  ten TTS engines behind one /tts contract
 knowledge/            the OKF bundle: raw sources, compiled wiki, benefit tables
 ```
 

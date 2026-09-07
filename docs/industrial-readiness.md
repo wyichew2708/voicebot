@@ -129,17 +129,35 @@ parameters and is already the small model.
 
 In rough order of what would bite first on a real line.
 
-1. **RHEL end-to-end has never run.** The CUDA path is written to mirror the
-   Mac path by calling the same code, and the sidecar refuses to start on the
-   English-only model — but none of it has met a GPU. Ship `voices/cache`
+1. **No GPU has run this, and no container image has been built.** The CUDA
+   path is written to mirror the Mac path by calling the same code, and the
+   sidecar refuses to start on the English-only model. Ship `voices/cache`
    with the deploy; first run is a smoke test, not a demo. The runbook is in
-   [deployments.md](deployments.md#shipping-a-release-2026-09-03), and two
-   defects that would only ever have shown up on that first run are now
-   fixed: the TTS container was never given `voices/`, and the sidecar looked
-   its reference clip up in a two-entry table of its own rather than using
-   the one the console asked for — so five of the seven voices, and every
-   Mandarin line, would have been rendered by the model's default speaker
-   with nothing logged.
+   [deployments.md](deployments.md#shipping-a-release-2026-09-03).
+
+   The sidecar half of it is no longer untried. It has now been run for
+   real on CPU — the actual `scripts/tts_sidecar.py` process, loading actual
+   weights for the default `chatterbox` engine and for `kokoro`, answering an
+   actual `CUDABackend` over HTTP, with the console's model switch routing
+   between them. Five defects that only appear on that path are now fixed.
+   Two were found before that run: the TTS container was never given
+   `voices/`, and the sidecar looked its reference clip up in a two-entry
+   table of its own rather than using the one the console asked for — so
+   five of the seven voices, and every Mandarin line, would have been
+   rendered by the model's default speaker with nothing logged. Three came
+   out of the run itself: the documented `PIP=<venv>/bin/pip` could not work
+   because `uv venv` installs no `pip`, so the dependency script died before
+   installing anything; Kokoro's English front end needs spaCy's
+   `en_core_web_sm`, which is not a pip dependency of anything, so the
+   sidecar booted, reported healthy and then failed every English line with
+   a 500; and TTS shared the 30 s ASR/LLM budget, so an engine slower than
+   the 0.5B incumbent returned empty audio and the turn went silent with
+   nothing in the log saying why. TTS now has its own budget and says
+   loudly when it is exceeded.
+
+   What is still unverified is CUDA itself and the images. `docker compose
+   config` validates, with and without `--profile trial`, but no image has
+   been built here and no kernel has run on a GPU.
 2. **Telephony.** The console talks to a browser microphone. A SIP/PSTN leg
    changes the audio (8 kHz, codec loss), the endpointing and the barge-in
    behaviour. The client VAD constants will need re-measuring against a real

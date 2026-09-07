@@ -80,6 +80,15 @@ optimises the accent back out.
    GPU time; this is the right *product* answer.
    **This is the recommendation for production.**
 
+   The "config change" is now literal. `config/tts-models.yaml` is the
+   registry the console's *TTS model* switch reads, and a fine-tune is one
+   stanza in it — a repo id for the Mac path, an engine name for the GPU
+   sidecar — after which it is selectable at runtime beside the incumbent,
+   with `make tts-bench` to compare the two on the same sentence set. The
+   paper's other subject, **CosyVoice 3**, is already in that registry and
+   runnable, so its off-the-shelf 0.5771 can be heard before anyone commits
+   GPU time to reaching 0.6798. See [tts-models.md](tts-models.md).
+
 3. **Try `mesolitica/VITS-female-singlish` today.** Already trained on the
    Singapore National Speech Corpus. Caveats: standard VITS in PyTorch at
    22 kHz (`model.pth`, not MLX — another sidecar), it needs malaya-speech's
