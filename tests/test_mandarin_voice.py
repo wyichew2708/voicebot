@@ -263,3 +263,59 @@ def test_without_a_named_clip_the_old_lookup_still_works(monkeypatch):
         "/tts", json={"text": "No problem.", "lang": "en", "voice": "male"})
     assert r.status_code == 200
     assert seen[0][1]["audio_prompt_path"] == str(ROOT / "voices/refs/male.wav")
+
+
+# --- the voice picker's preview -------------------------------------------
+
+def test_the_sample_is_the_clone_and_not_the_speaker_it_came_from(tmp_path, monkeypatch):
+    """The agent names itself in turn 1 and the name follows the voice, so the
+    line a voice has on disk is the one with *its* name in it. Rendered under
+    the default name instead, every Michelle voice missed the cache and the
+    endpoint fell back to the reference clip: six of the seven preview buttons
+    played the speaker the voice was cloned from rather than the clone, which
+    is the one comparison the picker exists to make.
+    """
+    import wave
+
+    from fastapi.testclient import TestClient
+
+    from voicebot import config, server
+    from voicebot.call import script
+    from voicebot.data import personas
+    from voicebot.runtime.prerender import PrerenderCache
+
+    cfg = config.load("mock")
+    cfg.setdefault("backend", {}).setdefault("tts", {})["prerender"] = {
+        "cache_dir": str(tmp_path),
+        "voices": {"male": {"label": "Male", "ref_audio": "voices/refs/male.wav"},
+                   "female": {"label": "Female", "ref_audio": "voices/refs/female.wav"}}}
+    server._state.clear()
+    server._state["cfg"] = cfg
+
+    cache = PrerenderCache(cfg["backend"]["tts"]["prerender"], 16000)
+    policy = next(iter(personas.all_policies()))
+    # Seed each voice's line under the name that voice actually gives.
+    for vid in ("male", "female"):
+        line = script.render(1, policy, "en", agent_name=script.agent_name_for(vid))
+        with wave.open(str(cache.path(line, "en", vid)), "wb") as w:
+            w.setnchannels(1); w.setsampwidth(2); w.setframerate(16000)
+            w.writeframes(b"\x03\x00" * 8000)
+    try:
+        with TestClient(app=server.app) as c:
+            for vid in ("male", "female"):
+                r = c.get(f"/api/voices/{vid}/sample.wav")
+                assert r.status_code == 200, vid
+                assert r.headers["X-Sample"] == "rendered", (
+                    f"{vid} fell back to its reference clip — the picker would "
+                    f"play the source speaker instead of the clone")
+    finally:
+        server._state.clear()
+
+
+def test_the_two_agent_names_do_not_share_a_sample():
+    """`agent_name_for` is what makes the lines differ, so a change that made
+    every voice give the same name would make this test pass for the wrong
+    reason and the bug above come back."""
+    from voicebot.call import script
+
+    assert script.agent_name_for("male") != script.agent_name_for("female")

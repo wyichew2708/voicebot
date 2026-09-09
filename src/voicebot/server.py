@@ -416,7 +416,14 @@ async def voice_sample(vid: str) -> Response:
 
     cache = PrerenderCache(_prerender_cfg(), _state["cfg"]["audio"]["sample_rate"])
     policy = next(iter(personas.all_policies()))
-    line = script.render(SAMPLE_TURN, policy, "en")
+    # The agent names itself in this line and the name follows the voice, so
+    # the line a voice actually has on disk is the one with *its* name in it.
+    # Rendered under the default name instead, every Michelle voice missed the
+    # cache and the picker played the reference clip: six of the seven preview
+    # buttons played the speaker the voice was cloned from rather than the
+    # clone, which is the one comparison the picker exists to make.
+    line = script.render(SAMPLE_TURN, policy, "en",
+                         agent_name=script.agent_name_for(vid))
     pcm = await asyncio.get_running_loop().run_in_executor(
         None, cache.get, line, "en", vid)
     if pcm:

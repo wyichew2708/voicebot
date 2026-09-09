@@ -65,7 +65,14 @@
      hint appears when a voice is cold, not to congratulate you when it is
      warm, and the microphone guidance is a tooltip on the control it
      describes. */
-  .col.controls { overflow: hidden; }
+  /* Sized to fit without this: the drawers below keep the rail inside the
+     window at any sensible height. It is `auto` rather than `hidden` because
+     the two failures are not equal — a control that scrolls into view is
+     found, and a control silently cut off by a short window is not. That was
+     the regression: three panels and a model picker were added, the column
+     went 22px over at 1512x900, and the overflow was invisible. */
+  .col.controls { overflow-y: auto; overscroll-behavior: contain;
+                  scrollbar-width: thin; }
   .col.controls .panel, .col.controls .actions { flex: none; }
   /* One panel gives, so the controls never can. The policyholder record is
      reference material — the only thing here that can lose its bottom few
@@ -223,7 +230,10 @@
   .seg button { flex: 1; border: none; background: none; cursor: pointer;
                 font-family: var(--f-mono); font-size: 10.5px; font-weight: 700;
                 letter-spacing: .05em; padding: 7px 4px; border-radius: 6px;
-                color: var(--muted); transition: .15s; }
+                color: var(--muted); transition: .15s;
+                /* "华语" is two characters and was wrapping to two lines
+                   beside the wider "ENGLISH", which set the row's height. */
+                white-space: nowrap; }
   .seg button[aria-pressed="true"] { background: var(--accent); color: #fff; }
   :root[data-theme="dark"] .seg button[aria-pressed="true"],
   :root:not([data-theme="light"]) .seg button[aria-pressed="true"] { color: #06181C; }
@@ -231,6 +241,29 @@
   .fieldlab { font-family: var(--f-mono); font-size: 9.5px; letter-spacing: .11em;
               text-transform: uppercase; color: var(--muted); margin-bottom: 5px; display: block; }
   .field { margin-bottom: 9px; }
+  /* Two two-button segments on one row. Apart they cost two labels and two
+     rows of buttons to offer four buttons. */
+  .duo { display: grid; grid-template-columns: 1fr 1fr; gap: 0 7px; }
+  .duo .seg { padding: 2px; gap: 2px; }
+  .duo .seg button { padding: 7px 2px; font-size: 9.5px; letter-spacing: .02em; }
+  /* Voice lab: three drawers, one open at a time. The open one scrolls inside
+     the panel rather than pushing "Run a scripted call" off the bottom. */
+  /* Their own row. Three drawer buttons at the header's normal size did not
+     fit beside the title in a 224px rail, and the third — MODEL — was simply
+     not drawn: an overflowing flex row clips its last child in silence. */
+  #labPanel .phead { flex-wrap: wrap; row-gap: 7px; }
+  .labtabs { display: flex; gap: 5px; flex: 1 1 100%; }
+  .labtabs .micbtn { flex: 1; justify-content: center; padding: 6px 4px;
+                     font: 700 9.5px/1 var(--f-mono); letter-spacing: .07em;
+                     border-radius: 7px; }
+  .labtabs .micbtn[aria-expanded="true"] { border-color: var(--accent);
+                                           background: var(--accent-soft);
+                                           color: var(--accent); }
+  #labPanel { flex: 0 1 auto; }
+  #labPanel .pbody { overflow-y: auto; min-height: 0; }
+  /* The synthetic-record badge is a panel footer now, not part of the body
+     that scrolls. */
+  #policyPanel .synthetic { flex: none; margin: 0 12px 10px; }
   /* Shows the register actually changing the wording. Without it an operator
      who only runs one setting cannot tell the switch does anything. */
   .preview { margin-top: 6px; font-size: 10px; line-height: 1.35; color: var(--muted);
@@ -489,6 +522,13 @@
   .player.blocked span::after { content: " — press play"; }
   .player audio { flex: 1; height: 30px; min-width: 0; }
 
+  /* A wide window has horizontal room going spare and no vertical room at
+     all, so the rail takes some of it back — paired segments stop being
+     cramped and the policyholder record stops wrapping. */
+  @media (min-width: 1500px) {
+    .app { grid-template-columns: 254px minmax(0,1fr) 340px; }
+    .duo .seg button { font-size: 10.5px; letter-spacing: .05em; }
+  }
   @media (max-width: 1180px) {
     body { height: auto; overflow: auto; }
     .app { grid-template-columns: 220px minmax(0,1fr); height: auto; overflow: visible; }
@@ -527,9 +567,20 @@
           </div>
           <div class="vpickhint" id="nameHint"></div>
         </div>
-        <div class="field">
-          <span class="fieldlab">Opening language</span>
-          <div class="seg" id="segLang" role="group" aria-label="Opening language"></div>
+        <!-- Two two-button segments side by side. Each was a full-width row,
+             which cost a line of label and a line of buttons for four buttons
+             in total, and the column has no height to spare. -->
+        <div class="duo">
+          <div class="field">
+            <span class="fieldlab">Language</span>
+            <div class="seg" id="segLang" role="group" aria-label="Opening language"></div>
+          </div>
+          <div class="field">
+            <span class="fieldlab">Mic pickup</span>
+            <div class="seg" id="segMic" role="group" aria-label="Microphone sensitivity"
+                 title="Higher hears a quiet start; too high and the room counts as
+speech. Each setting is a multiple of the measured room level."></div>
+          </div>
         </div>
         <div class="field">
           <span class="fieldlab">Agent voice</span>
@@ -538,25 +589,14 @@
           <button type="button" class="vmore" id="voiceMore"
                   aria-expanded="false" aria-controls="segVoice">Change voice</button>
           <div class="vpickhint" id="voiceHint"></div>
-        </div>
-        <div class="field">
-          <label class="fieldlab" for="selTts">TTS model &mdash; experiment</label>
-          <select id="selTts" title="Every agent line, scripted or not, is spoken by
-this model for the whole call. Blank is the shipped path: cache plus live voice.">
-            <option value="">Shipped path (cache + live voice)</option>
-          </select>
-          <div class="tryrow">
-            <input id="inTry" type="text" autocomplete="off" spellcheck="false"
-                   placeholder="type a line, hear it in this model">
-            <button type="button" class="vsbtn" id="btnTry">SAY</button>
-          </div>
-          <div class="vpickhint" id="ttsHint"></div>
-        </div>
-        <div class="field">
-          <span class="fieldlab">Mic sensitivity</span>
-          <div class="seg" id="segMic" role="group" aria-label="Microphone sensitivity"
-               title="Higher hears a quiet start; too high and the room counts as
-speech. Each setting is a multiple of the measured room level."></div>
+          <!-- Seven choices, two Mandarin speakers. Every male voice clones
+               zm_yunjian and every female one zf_xiaobei, so on a Mandarin
+               call the picker offers a distinction it cannot deliver. Better
+               said here than discovered by choosing Sarah and hearing
+               Isabella. -->
+          <div class="vpickhint" id="zhVoiceNote" hidden>In 华语 the male voices
+            share one Mandarin speaker and the female voices another &mdash; male
+            and female still differ, Isabella and Sarah do not.</div>
         </div>
         <div class="field">
           <span class="fieldlab">Register</span>
@@ -571,11 +611,21 @@ speech. Each setting is a multiple of the measured room level."></div>
       </div>
     </div>
 
-    <div class="panel">
+    <!-- One panel, three drawers. Three panels cost three headers of column
+         height to offer three buttons, and the rail has none to spare. Only
+         one drawer opens at a time, so however many are pressed the column
+         cannot grow past the window. -->
+    <div class="panel" id="labPanel">
       <div class="phead">
-        <span class="ptitle">Voice studio</span>
-        <button class="micbtn" id="vsToggle" aria-expanded="false"
-                aria-controls="vsBody" title="Agent voices: warm one up, or record your own">VOICES</button>
+        <span class="ptitle">Voice lab</span>
+        <div class="labtabs">
+          <button class="micbtn" id="vsToggle" aria-expanded="false"
+                  aria-controls="vsBody" title="Agent voices: warm one up, or record your own">VOICES</button>
+          <button class="micbtn" id="sgToggle" aria-expanded="false"
+                  aria-controls="sgBody" title="Recordings to listen to without a model: the shipped voices, the speakers they came from, other models — and every line said in the SAY box">LISTEN</button>
+          <button class="micbtn" id="ttsToggle" aria-expanded="false"
+                  aria-controls="ttsBody" title="Try another TTS model behind the same /tts contract">MODEL</button>
+        </div>
       </div>
       <div class="pbody" id="vsBody" hidden>
         <p class="vsnote">Read the script below and the agent will speak in your
@@ -623,14 +673,7 @@ speech. Each setting is a multiple of the measured room level."></div>
 
         <div class="vslist" id="vsList"></div>
       </div>
-    </div>
 
-    <div class="panel">
-      <div class="phead">
-        <span class="ptitle">Voice samples</span>
-        <button class="micbtn" id="sgToggle" aria-expanded="false"
-                aria-controls="sgBody" title="Recordings to listen to without a model: the shipped voices, the speakers they came from, other models — and every line said in the box above">LISTEN</button>
-      </div>
       <div class="pbody" id="sgBody" hidden>
         <p class="vsnote">Female and male voices from the models tried so far, and
           whatever this machine has rendered with the SAY box or
@@ -643,14 +686,34 @@ speech. Each setting is a multiple of the measured room level."></div>
         </div>
         <div class="vslist" id="sgList"></div>
       </div>
+
+      <div class="pbody" id="ttsBody" hidden>
+        <div class="field">
+          <label class="fieldlab" for="selTts">Speak every line with</label>
+          <select id="selTts" title="Every agent line, scripted or not, is spoken by
+this model for the whole call. Blank is the shipped path: cache plus live voice.">
+            <option value="">Shipped path (cache + live voice)</option>
+          </select>
+          <div class="tryrow">
+            <input id="inTry" type="text" autocomplete="off" spellcheck="false"
+                   placeholder="type a line, hear it in this model">
+            <button type="button" class="vsbtn" id="btnTry">SAY</button>
+          </div>
+          <div class="vpickhint" id="ttsHint"></div>
+        </div>
+      </div>
     </div>
 
     <div class="panel" id="policyPanel">
       <div class="phead"><span class="ptitle">Policyholder</span></div>
       <div class="pbody">
         <dl class="persona" id="persona"></dl>
-        <div class="synthetic" title="Synthetic record — not a real customer">Synthetic &mdash; not a real customer</div>
       </div>
+      <!-- Outside the scrolling body on purpose. This panel is the one that
+           gives up height when the window is short, and the badge saying the
+           record is not a real customer is the last thing that should scroll
+           out of sight when it does. -->
+      <div class="synthetic" title="Synthetic record — not a real customer">Synthetic &mdash; not a real customer</div>
     </div>
 
     <div class="actions">
@@ -1201,12 +1264,35 @@ speech. Each setting is a multiple of the measured room level."></div>
       sgPaint();
     });
   });
+  // ------------------------------------------------------------- voice lab
+  // Three drawers sharing one panel, and at most one open. Two open at once
+  // and the rail is taller than the window again, which is the whole reason
+  // they were merged.
+  var LAB = [["vsToggle", "vsBody", "VOICES"],
+             ["sgToggle", "sgBody", "LISTEN"],
+             ["ttsToggle", "ttsBody", "MODEL"]];
+
+  function labShow(bodyId) {
+    // Closing the studio while the microphone is live would leave it
+    // recording into a drawer nobody can see.
+    if (bodyId !== "vsBody" && !$("vsBody").hidden
+        && typeof vsRecording !== "undefined" && vsRecording) vsStopRecording();
+    LAB.forEach(function (d) {
+      var on = d[1] === bodyId;
+      $(d[1]).hidden = !on;
+      $(d[0]).setAttribute("aria-expanded", on ? "true" : "false");
+      $(d[0]).textContent = on ? "CLOSE" : d[2];
+    });
+  }
+
   $("sgToggle").addEventListener("click", function () {
-    var body = $("sgBody"), open = body.hidden;
-    body.hidden = !open;
-    this.setAttribute("aria-expanded", open ? "true" : "false");
-    this.textContent = open ? "CLOSE" : "LISTEN";
+    var open = $("sgBody").hidden;
+    labShow(open ? "sgBody" : null);
     if (open) sgRefresh();
+  });
+
+  $("ttsToggle").addEventListener("click", function () {
+    labShow($("ttsBody").hidden ? "ttsBody" : null);
   });
 
   // ---------------------------------------------------------- voice studio
@@ -1421,10 +1507,8 @@ speech. Each setting is a multiple of the measured room level."></div>
   }
 
   $("vsToggle").addEventListener("click", function () {
-    var body = $("vsBody"), open = body.hidden;
-    body.hidden = !open;
-    this.setAttribute("aria-expanded", open ? "true" : "false");
-    this.textContent = open ? "CLOSE" : "VOICES";
+    var open = $("vsBody").hidden;
+    labShow(open ? "vsBody" : null);
     if (open) vsRefresh(); else if (vsRecording) vsStopRecording();
   });
   vsRefresh();
@@ -1599,7 +1683,11 @@ speech. Each setting is a multiple of the measured room level."></div>
   $("rgSinglish").addEventListener("click", function () { if (!running) setRegister("singlish"); });
 
   seg($("segLang"), [{ id: "en", label: "ENGLISH" }, { id: "zh", label: "华语" }],
-      "en", function (l) { lang = l; refreshPreview(); });
+      "en", function (l) {
+        lang = l;
+        $("zhVoiceNote").hidden = l !== "zh";
+        refreshPreview();
+      });
 
   function loadPersonas() {
     fetch("/api/personas").then(function (r) { return r.json(); }).then(function (ps) {

@@ -89,13 +89,30 @@ def test_transcripts_are_not_cleared_between_calls():
 
 def test_the_whole_console_fits_one_screen():
     """No scrolling: the control column must not need a scrollbar, or the call
-    buttons end up below the fold on a 768px-tall laptop."""
+    buttons end up below the fold on a 768px-tall laptop.
+
+    This used to assert the column was `overflow: hidden`, on the rule that a
+    scrollbar means the layout has grown and should be compacted instead. The
+    rule is right and the assertion was the wrong instrument for it: `hidden`
+    does not prevent growth, it conceals it. A model picker and two panels
+    were added, the column went 22px over at 1512x900, and the third drawer
+    button was not drawn at all — no scrollbar, no error, just a control that
+    was not there.
+
+    So the requirement is unchanged and now checked where it lives: the
+    compaction mechanisms below are what keep the column inside the window,
+    and `test_the_controls_column_never_hides_a_control` pins each of them.
+    What changed is the failure mode when they are not enough — a control
+    reached by scrolling beats a control silently cut off.
+    """
     ui = _ui_text()
     assert "height: 100dvh" in ui and "overflow: hidden" in ui, "the shell should be viewport-locked"
-    # The control column previously scrolled as a whole; anything that needs a
-    # scrollbar there is a sign the layout has grown again.
-    assert ".col.controls { overflow-y: auto" not in ui, \
-        "the control column is scrolling again — compact it instead"
+    assert ".col.controls { overflow: hidden; }" not in ui, \
+        "hidden is how the column clipped a control without anyone noticing"
+    # Every one of these exists to stop the column needing that scrollbar.
+    for mechanism in (".vpick.collapsed", "#labPanel .pbody { overflow-y: auto",
+                      "#policyPanel { flex: 0 1 auto", ".duo {"):
+        assert mechanism in ui, f"compaction removed: {mechanism}"
 
 
 def test_register_difference_is_shown_not_asserted():
@@ -380,13 +397,73 @@ def test_the_controls_column_never_hides_a_control():
     """Its own rule: "compact the column rather than adding a scrollbar — a
     toggle hidden below a fold is a toggle nobody uses." Seven voices broke
     it, so the picker collapses to the one in use and the one panel that is
-    reference rather than control takes up the slack."""
+    reference rather than control takes up the slack.
+
+    Every mechanism below is what keeps the column inside the window. The
+    last assertion is the one that changed: `hidden` was the rule until a
+    model picker and two panels were added, the column went over by 22px at
+    1512x900, and the overflow was invisible — the third drawer button was
+    simply not drawn. Compacting still comes first; `auto` is what the column
+    does when compacting is not enough, because a control reached by
+    scrolling beats a control silently cut off.
+    """
     ui = _ui_text()
     assert ".vpick.collapsed .vrow[aria-checked=\"false\"] { display: none; }" in ui
     assert "#policyPanel { flex: 0 1 auto" in ui
     assert "#policyPanel .pbody { overflow-y: auto" in ui
-    # And nothing in the column may scroll: compacting comes first, always.
-    assert ".col.controls { overflow: hidden; }" in ui
+    assert ".col.controls { overflow-y: auto;" in ui
+
+
+def test_the_voice_lab_is_one_panel_of_drawers():
+    """Three panels cost three headers of column height to offer three
+    buttons. Merged, and at most one drawer open — two at once and the rail
+    is taller than the window again, which is what the merge was for."""
+    ui = _ui_text()
+    for bid in ("vsBody", "sgBody", "ttsBody"):
+        assert f'id="{bid}"' in ui, bid
+    # One panel holds all three: the slice runs from the lab panel's own tag
+    # to the start of the next panel's.
+    lab = ui[ui.index('id="labPanel"'):ui.index('<div class="panel" id="policyPanel"')]
+    for bid in ("vsBody", "sgBody", "ttsBody"):
+        assert f'id="{bid}"' in lab, f"{bid} is not inside the lab panel"
+    assert 'class="panel"' not in lab, "the drawers must not be separate panels"
+    # And the toggles go through the one function that closes the others.
+    block = ui[ui.index("function labShow"):]
+    assert "d[1] === bodyId" in block[:600]
+    for toggle in ("vsToggle", "sgToggle", "ttsToggle"):
+        assert f'$("{toggle}").addEventListener' in ui, toggle
+
+
+def test_the_drawer_buttons_get_a_row_of_their_own():
+    """Three buttons at the header's normal size did not fit beside the title
+    in a 224px rail, and an overflowing flex row drops its last child without
+    a word: MODEL was not drawn at all."""
+    ui = _ui_text()
+    assert "#labPanel .phead { flex-wrap: wrap" in ui
+    assert ".labtabs { display: flex; gap: 5px; flex: 1 1 100%; }" in ui
+
+
+def test_the_synthetic_badge_is_not_in_the_part_that_scrolls():
+    """The policyholder panel is the one that gives up height when the window
+    is short. The badge saying this is not a real customer is the last thing
+    that should scroll out of sight when it does."""
+    ui = _ui_text()
+    panel = ui[ui.index('id="policyPanel"'):ui.index('class="actions"')]
+    body = panel[panel.index('class="pbody"'):]
+    badge = panel.index('class="synthetic"')
+    assert badge > panel.index("</div>", panel.index('class="pbody"')), \
+        "the badge is still inside the scrolling body"
+    assert "#policyPanel .synthetic { flex: none" in ui
+
+
+def test_the_mandarin_voices_say_they_are_shared():
+    """Seven choices, two Mandarin speakers: every male voice clones one clip
+    and every female voice another. The picker offers a distinction it cannot
+    deliver on a Mandarin call, so it says so rather than letting an operator
+    find out by choosing Sarah and hearing Isabella."""
+    ui = _ui_text()
+    assert 'id="zhVoiceNote"' in ui
+    assert '$("zhVoiceNote").hidden = l !== "zh";' in ui
 
 
 def test_the_register_preview_is_not_fetched_while_hidden():
