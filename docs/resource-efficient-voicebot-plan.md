@@ -20,7 +20,9 @@ remain open. Hardware latency and memory still need measurement. Priority 5
 software is implemented: see [adaptive-endpointing.md](adaptive-endpointing.md)
 for local CPU neural VAD, adaptive pauses and fallback behavior. Held-out audio
 and target-device validation remain open. Priority 6 (compact-model routing
-and prompt correction) is the next independent improvement.
+and prompt correction) is the next independent improvement. See the
+[detailed priority 6 plan](compact-model-routing-plan.md) for implementation
+order, evaluation evidence and promotion gates.
 
 Start with interruption correctness and measurement. Retain the current models for the first change so any improvement or regression can be attributed to the pipeline.
 
