@@ -27,6 +27,7 @@ class Transcript(Event):
     lang: str
     source: str = ""          # "pre-rendered" | "generated" | "pre-rendered + slots"
     latency_ms: int | None = None
+    response_role: str = "answer"  # answer | acknowledgement | clarification
     kind: str = field(default="transcript", init=False)
 
 
@@ -69,7 +70,9 @@ class CallEnded(Event):
 @dataclass
 class AgentAudio(Event):
     """Consumed by the transport, never serialised to JSON — the websocket
-    sends these as binary frames alongside the transcript."""
+    sends these as binary frames alongside the transcript. Protocol 2 adds
+    transport-owned generation/audio/sequence headers; see
+    docs/interruption-handling.md. This event remains backend-independent."""
     pcm: bytes
     sample_rate: int
     #: Where this sits in one utterance. A line synthesised in pieces arrives

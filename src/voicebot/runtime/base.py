@@ -29,10 +29,18 @@ class Speech:
     pcm: bytes                 # 16-bit little-endian mono
     sample_rate: int
     latency_ms: int
-    #: Which model actually spoke. "cache" and "rendered" are the same voice;
-    #: "live" is a different speaker entirely and must never happen twice in
-    #: one call without the operator being told.
+    #: Delivery path: cache read, local render, or live synthesis. Live speech
+    #: can use the same voice; voice_consistent declares that backend contract.
     voice_source: str = "cache"
+    voice_consistent: bool = False  # live synthesis explicitly uses the cache voice
+
+
+@dataclass
+class SpeechChunk:
+    pcm: bytes
+    sample_rate: int
+    final: bool = False
+    voice_source: str = "live"
 
 
 @dataclass
@@ -47,6 +55,21 @@ class BackendHealth:
 
 @runtime_checkable
 class Backend(Protocol):
+    """Response methods must propagate asyncio cancellation after cleanup.
+
+    A cancelled coroutine must not write call state or emit events later.
+    Executor/native inference may finish internally; the transport fences its
+    result and the backend retains ownership of its worker until it returns.
+    Cancelling an await is not a guarantee of native GPU/HTTP request abort.
+    """
+    streaming_tts: bool = False
+
+    async def stream_speak(self, text: str, lang: str, voice: str | None = None):
+        """Buffered fallback. Only streaming_tts=True promises early segments."""
+        speech = await self.speak(text, lang, prerendered=True, voice=voice)
+        yield SpeechChunk(speech.pcm, speech.sample_rate, final=True,
+                          voice_source=speech.voice_source)
+
     async def transcribe(self, pcm: bytes, sample_rate: int) -> TranscriptResult: ...
 
     async def complete(self, system: str, user: str, lang: str,

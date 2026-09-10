@@ -168,9 +168,30 @@ def test_noise_is_not_evidence_for_a_language_switch():
 
 def test_the_model_is_started_before_the_filler_is_spoken():
     """The filler covers the wait; it must not add to it."""
-    src = inspect.getsource(E.CallSession._routed)
-    assert src.index("asyncio.ensure_future") < src.index("THINKING[self.lang]")
-    assert src.index("THINKING[self.lang]") < src.index("got = await pending")
+    from voicebot.runtime.base import Speech
+
+    async def run():
+        entered, release = asyncio.Event(), asyncio.Event()
+        class ConcurrentRouter(MockBackend):
+            async def complete(self, *args, **kwargs):
+                entered.set()
+                await release.wait()
+                return Completion("unclear", 0)
+
+            async def speak(self, text, lang, prerendered, voice=None):
+                if E.THINKING[lang] in text:
+                    # Generation must already be in flight while the filler
+                    # is produced; awaiting completion first would deadlock.
+                    await asyncio.wait_for(entered.wait(), 1)
+                    assert not release.is_set()
+                    release.set()
+                return Speech(b"\0\0" * 640, 16000, 0)
+
+        session = CallSession(personas.get("TH-4471-0093"), ConcurrentRouter())
+        session.turn = 2
+        await asyncio.wait_for(_drain(session._routed("an unfamiliar reply")), 2)
+        assert entered.is_set() and release.is_set()
+    asyncio.run(run())
 
 
 def test_the_filler_is_pre_rendered():

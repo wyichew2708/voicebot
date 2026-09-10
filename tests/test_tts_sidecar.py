@@ -15,6 +15,57 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+
+def test_health_remains_responsive_and_overload_is_bounded(monkeypatch):
+    import asyncio
+    import threading
+    import httpx
+    from voicebot.runtime.workers import BoundedExecutor
+
+    mod = _sidecar()
+    mod._worker.shutdown()
+    mod._worker = BoundedExecutor(1, 0)
+    mod._state['m'] = object()
+    entered, release = threading.Event(), threading.Event()
+    def render(*args):
+        entered.set()
+        assert release.wait(3)
+        return b'fake-wav'
+    monkeypatch.setattr(mod, '_render', render)
+    monkeypatch.setattr(mod, '_reference', lambda *a: Path('reference.wav'))
+
+    async def run():
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=mod.app),
+                                     base_url='http://test') as client:
+            body = {'text':'hello','lang':'en','voice':'male'}
+            first = asyncio.create_task(client.post('/tts', json=body))
+            while not entered.is_set():
+                await asyncio.sleep(0)
+            try:
+                health = await asyncio.wait_for(client.get('/health'), .5)
+                assert health.status_code == 200
+                busy = await asyncio.wait_for(client.post('/tts', json=body), .5)
+                assert busy.status_code == 503
+                assert busy.headers['retry-after'] == '1'
+            finally:
+                release.set()
+                assert (await first).status_code == 200
+    try:
+        asyncio.run(run())
+    finally:
+        release.set()
+        mod._worker.shutdown()
+
+
+def test_unloaded_sidecar_refuses_requests_without_loading(monkeypatch):
+    from fastapi.testclient import TestClient
+    mod = _sidecar()
+    monkeypatch.setattr(mod, '_model', lambda: pytest.fail('request-time model load'))
+    monkeypatch.setattr(mod, '_reference', lambda *a: Path('reference.wav'))
+    client = TestClient(mod.app)
+    assert client.get('/health').status_code == 503
+    assert client.post('/tts', json={'text':'hello','lang':'en'}).status_code == 503
+
 ROOT = Path(__file__).resolve().parents[1]
 
 

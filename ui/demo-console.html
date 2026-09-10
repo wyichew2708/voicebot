@@ -599,6 +599,11 @@ speech. Each setting is a multiple of the measured room level."></div>
             and female still differ, Isabella and Sarah do not.</div>
         </div>
         <div class="field">
+          <label class="fieldlab" for="endpointMode">Pause tolerance</label>
+          <select id="endpointMode"><option value="balanced">Balanced</option><option value="patient">Long pauses</option></select>
+          <span id="vadStatus" class="fieldlab">Speech detector: waiting for microphone</span>
+        </div>
+        <div class="field">
           <span class="fieldlab">Register</span>
           <div class="seg" role="group" aria-label="Register">
             <button id="rgStandard" aria-pressed="true">STANDARD</button>
@@ -747,10 +752,11 @@ this model for the whole call. Blank is the shipped path: cache plus live voice.
           <span id="whoCaller"><i style="background:var(--cust)"></i> Caller</span>
         </div>
         <div class="bignum">
-          <div class="stat"><b id="statLat">&mdash;</b><span>ms this turn</span></div>
+          <div class="stat"><b id="statLat">&mdash;</b><span title="Browser playback estimate from the last detected speech frame. Microphone answers only.">answer ms · est.</span></div>
           <div class="stat"><b id="statP50">&mdash;</b><span>p50</span></div>
-          <div class="stat"><b id="statTurns">0</b><span>turns</span></div>
+          <div class="stat"><b id="statTurns">0</b><span>samples</span></div>
         </div>
+        <div class="mono" style="text-align:center;font-size:11px">Acknowledgement: <span id="statAck">—</span> ms · est.</div>
         <!-- One big control, the way a voice app works: press to start, then
              it becomes the mic toggle for the rest of the call. -->
         <div class="dialer">
@@ -804,6 +810,9 @@ this model for the whole call. Blank is the shipped path: cache plus live voice.
   </div>
 </div>
 
+<script src="realtime-audio.js"></script>
+<script src="endpointing.js"></script>
+<script src="neural-vad.js"></script>
 <script>
 (function () {
   "use strict";
@@ -889,7 +898,7 @@ this model for the whole call. Blank is the shipped path: cache plus live voice.
     var meta = '<span class="who">' + (kind === "agent" ? "Agent" : "Caller") + '</span>' +
                '<span class="lang ' + lc + '">' + (e.lang || "") + '</span>';
     if (e.source) meta += '<span class="src">' + e.source + '</span>';
-    if (e.latency_ms) meta += '<span class="src">' + e.latency_ms + ' ms</span>';
+    if (e.latency_ms) meta += '<span class="src">' + e.latency_ms + ' ms server</span>';
     d.innerHTML = '<div class="mmeta">' + meta + '</div><div class="bub">' + e.text + '</div>';
     $("tx").appendChild(d); scrollTx();
   }
@@ -986,7 +995,7 @@ this model for the whole call. Blank is the shipped path: cache plus live voice.
       if (e.speaker === "agent") setWorking(false);
       setSpeaker(e.speaker === "agent" ? "a" : "c");
       addMsg(e.speaker, e);
-      if (e.speaker === "agent" && e.latency_ms) pushLat(e.latency_ms);
+      // Playback telemetry, not transcript generation, supplies the latency stats.
       $("cstate").textContent = e.speaker === "agent" ? "Agent speaking" : "Caller speaking";
     } else if (e.kind === "turn") {
       railState[e.turn - 1] = e.state;
@@ -1013,6 +1022,45 @@ this model for the whole call. Blank is the shipped path: cache plus live voice.
     $("connBadge").className = "bi-key " + (s === "on" ? "on" : "off");
   }
 
+  var audioProtocol = new VoiceAudioProtocol();
+  var workletPlayback = null, workletActive = null, workletLoading = null;
+  var mediaPlayback = null;
+  var responsePending = false;
+
+  function reportPlaybackStart(at, method) {
+    var event = audioProtocol.started(at, method);
+    if (event) send(event);
+  }
+
+  function schedulePlaybackMeasurement(ctx, when) {
+    var active = audioProtocol.active;
+    if (!active || active.measurementScheduled) return;
+    active.measurementScheduled = true;
+    var at = performance.now() + Math.max(0, when - ctx.currentTime) * 1000;
+    var method = "webaudio_schedule_estimate";
+    if (typeof ctx.getOutputTimestamp === "function") {
+      var stamp;
+      try { stamp = ctx.getOutputTimestamp(); } catch (_) { /* Keep playback running. */ }
+      if (stamp && Number.isFinite(stamp.performanceTime) && stamp.performanceTime > 0 &&
+          Number.isFinite(stamp.contextTime) && stamp.contextTime > 0) {
+        at = stamp.performanceTime + (when - stamp.contextTime) * 1000;
+        method = "webaudio_output_timestamp_estimate";
+      }
+    }
+    // Do not report an audio start that was cancelled during the playout lead.
+    setTimeout(function () {
+      if (audioProtocol.active === active && ctx.state === "running") {
+        reportPlaybackStart(at, method);
+      }
+    }, Math.max(0, at - performance.now()));
+  }
+
+  function playbackDone() {
+    if (workletActive || streamSrcs.length || pendN) return;
+    var done = audioProtocol.complete();
+    if (done) send(done);
+  }
+
   function connect() {
     if (location.protocol === "file:" || !location.host) { setConn("off", "STANDALONE"); return; }
     try { ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") +
@@ -1022,21 +1070,34 @@ this model for the whole call. Blank is the shipped path: cache plus live voice.
     var settled = false;
     var giveUp = setTimeout(function () { if (!settled) { settled = true; setConn("off", "OFFLINE"); } }, 2500);
     ws.onopen = function () {
-      settled = true; clearTimeout(giveUp); live = true; setConn("on", "LIVE"); refreshHealth();
+      settled = true; clearTimeout(giveUp); live = true; audioProtocol = new VoiceAudioProtocol(); setConn("on", "LIVE"); refreshHealth();
     };
     ws.onmessage = function (m) {
       if (typeof m.data !== "string") {
         if (incoming) {
-          var frame = new Int16Array(m.data);
+          var frame = audioProtocol.frame(m.data);
+          if (!frame) return;
           incoming.push(frame);
           if (streamOn) feedStream(frame);
         }
         return;
       }
       var e = JSON.parse(m.data);
+      if (!audioProtocol.accepts(e)) return;
+      if (e.kind === "audio_cancel") {
+        stopPlayback();
+        setSpeaker(null);
+        return;
+      }
       if (e.kind === "audio_begin") {
+        if (!audioProtocol.begin(e)) return;
         incoming = []; incoming.rate = e.sample_rate;
-        streamOn = beginStream(e.sample_rate);
+        streamOn = beginStream(e.sample_rate, e.flow_control);
+        if (e.flow_control && !streamOn) {
+          send({type:"playback_error", generation:e.generation, audio_id:e.audio_id});
+          addSys("Audio output could not start. Enable audio and restart the call.", false);
+          return;
+        }
         if (streamOn) {
           $("player").classList.add("on");
           $("player").classList.remove("blocked");
@@ -1045,7 +1106,9 @@ this model for the whole call. Blank is the shipped path: cache plus live voice.
         return;
       }
       if (e.kind === "audio_end") {
+        if (!audioProtocol.end(e)) return;
         var n = incoming ? incoming.reduce(function (a, b) { return a + b.length; }, 0) : 0;
+        var wasStreaming = streamOn;
         if (n) {
           var all = new Int16Array(n), off = 0;
           incoming.forEach(function (c) { all.set(c, off); off += c.length; });
@@ -1053,19 +1116,63 @@ this model for the whole call. Blank is the shipped path: cache plus live voice.
           if (streamOn) { endStream(); loadForReplay(all, incoming.rate || 16000); }
           else play(all, incoming.rate || 16000);
         }
-        streamOn = false; incoming = null; return;
+        streamOn = false; incoming = null;
+        if (wasStreaming || !n) playbackDone();
+        return;
+      }
+      if (e.kind === "playback_started") {
+        log.push(Object.assign({at: new Date().toISOString()}, e));
+        if (e.input_kind === "microphone") {
+          if (e.first_answer) pushLat(Math.round(e.client_first_audio_ms));
+          if (e.role === "acknowledgement") $("statAck").textContent = Math.round(e.client_first_audio_ms);
+        }
+        return;
+      }
+      if (e.kind === "response_done") {
+        responsePending = false; setWorking(false); return;
       }
       if (e.kind === "call_started") return;
       apply(e);
     };
     ws.onclose = function () {
+      audioProtocol.request(); stopPlayback();
+      if (running) stop(false);
       if (!settled) { settled = true; clearTimeout(giveUp); setConn("off", "OFFLINE"); }
       else if (live) { live = false; setConn("off", "DISCONNECTED"); }
     };
     ws.onerror = function () { if (!settled) { settled = true; clearTimeout(giveUp); setConn("off", "OFFLINE"); } };
   }
-  function send(o) { if (live && ws && ws.readyState === 1) ws.send(JSON.stringify(o)); }
-  function sendBin(b) { if (live && ws && ws.readyState === 1) ws.send(b); }
+  function send(o) {
+    if (!(live && ws && ws.readyState === 1)) return;
+    if (["start", "say", "utterance_end", "barge_in", "hangup"].indexOf(o.type) >= 0) {
+      var detected = performance.now();
+      if (["start", "say", "utterance_end"].indexOf(o.type) >= 0) {
+        o.audio_flow = !!(workletPlayback && actx && actx.state === "running");
+      }
+      var origin = o.type === "utterance_end" ? o.speech_end_ms : detected;
+      if (!(Number.isFinite(origin) && origin >= 0 && origin <= detected)) origin = null;
+      if (o.type === "utterance_end") o.endpoint_ms = origin === null ? null : detected - origin;
+      o.client_turn = audioProtocol.request(origin);
+      if (o.type === "utterance_end" || o.type === "say") {
+        $("statLat").textContent = "—"; $("statAck").textContent = "—";
+      }
+      responsePending = ["start", "say", "utterance_end"].indexOf(o.type) >= 0;
+      stopPlayback();
+      setSpeaker(null);
+      if (o.type === "barge_in") o.stop_ms = performance.now() - detected;
+      if (o.type === "start") o.audio_protocol = 2;
+    }
+    ws.send(JSON.stringify(o));
+  }
+  function sendBin(b) {
+    if (!(live && ws && ws.readyState === 1 && micOn)) return false;
+    if (ws.bufferedAmount > 131072) {
+      micStop(); send({type:"discard_utterance"});
+      addSys("Microphone upload fell behind. Unmute to try again.", false);
+      return false;
+    }
+    ws.send(b); return true;
+  }
 
   // ------------------------------------------------------------- controls
 
@@ -1773,13 +1880,16 @@ this model for the whole call. Blank is the shipped path: cache plus live voice.
     return String(Math.floor(s / 60)).padStart(2, "0") + ":" + String(s % 60).padStart(2, "0");
   }
 
-  function beginCall(simulated) {
+  async function beginCall(simulated) {
     if (!live) { addSys("Not connected to the server.", false); return; }
     railState = []; gateState = {}; lats = [];
     renderRail(); renderGates();
+    $("statAck").textContent = "—";
     $("statLat").textContent = "—"; $("statP50").textContent = "—"; $("statTurns").textContent = "0";
     running = true;
+    responsePending = true;
     callCount++;
+    var startingCall = callCount;
     var p = personas[sel] || {};
     addSeparator("Call " + callCount + " · " + (p.name || "?") + " · " +
                  lang.toUpperCase() + " · " + (voice || "") + " · " + register +
@@ -1791,11 +1901,18 @@ this model for the whole call. Blank is the shipped path: cache plus live voice.
     $("cstate").textContent = "Connected";
     t0 = Date.now();
     tick = setInterval(function () { $("ctimer").textContent = fmt(Date.now() - t0); }, 500);
+    var ctx = ensureCtx();
+    if (ctx) {
+      try { await ctx.resume(); } catch (e) {}
+      await ensureWorklet(ctx);
+    }
+    if (!running || startingCall !== callCount) return;
     var over = nameOverride();
     send({ type: "start", policy_id: p.policy_id, register: register,
            voice: voice, lang: lang,
            surname: over ? over.surname : null,
            salutation: over ? over.salutation : null });
+    if (live) setWorking(true);
     $("txCount").textContent = callCount + (callCount === 1 ? " call" : " calls");
     if (!simulated) { $("talkbar").classList.add("on"); $("callerInput").focus(); }
   }
@@ -1804,6 +1921,8 @@ this model for the whole call. Blank is the shipped path: cache plus live voice.
     if (simTimer) { clearTimeout(simTimer); simTimer = null; }
     if (tick) { clearInterval(tick); tick = null; }
     running = false;
+    responsePending = false;
+    stopPlayback();
     $("btnSim").disabled = false;
     $("btnEnd").hidden = true;
     setOrb("idle");
@@ -1812,7 +1931,7 @@ this model for the whole call. Blank is the shipped path: cache plus live voice.
     $("cstate").textContent = finished ? "Call ended" : "Idle";
     $("talkbar").classList.remove("on");
     setSpeaker(null);
-    if (micOn) micStop();
+    micStop(); // also invalidates a permission/worklet setup still in flight
   }
 
   // ------------------------------------------------- simulated call driver
@@ -1834,8 +1953,9 @@ this model for the whole call. Blank is the shipped path: cache plus live voice.
         return;
       }
       var text = lines[i++];
-      simTimer = setTimeout(function () {
+      simTimer = setTimeout(function offer() {
         if (!running) return;
+        if (live && responsePending) { simTimer = setTimeout(offer, 100); return; }
         send({ type: "say", text: text });
         setWorking(true);              // the scripted call waits the same way
         next();
@@ -1875,7 +1995,16 @@ this model for the whole call. Blank is the shipped path: cache plus live voice.
   function ensureAudio() {
     if (!audioEl) {
       audioEl = $("playerAudio");
-      audioEl.addEventListener("ended", function () { if (speaker === "a") setSpeaker(null); });
+      audioEl.addEventListener("playing", function () {
+        if (mediaPlayback && mediaPlayback === audioProtocol.active) {
+          reportPlaybackStart(performance.now(), "media_playing_event");
+        }
+      });
+      audioEl.addEventListener("ended", function () {
+        if (speaker === "a") setSpeaker(null);
+        if (mediaPlayback && mediaPlayback === audioProtocol.active) playbackDone();
+        mediaPlayback = null;
+      });
     }
     return audioEl;
   }
@@ -1891,12 +2020,18 @@ this model for the whole call. Blank is the shipped path: cache plus live voice.
     return new Blob([buf], { type: "audio/wav" });
   }
   function stopPlayback() {
+    incoming = null; streamOn = false;
+    audioProtocol.active = null;
+    mediaPlayback = null;
     stopStream();
     if (audioEl) { try { audioEl.pause(); } catch (e) {} }
   }
   function play(int16, rate) {
     var el = ensureAudio();
+    var pendingPlayback = audioProtocol.active;
     stopPlayback();
+    audioProtocol.active = pendingPlayback;
+    mediaPlayback = pendingPlayback;
     if (audioUrl) URL.revokeObjectURL(audioUrl);
     audioUrl = URL.createObjectURL(wavBlob(int16, rate));
     el.src = audioUrl;
@@ -1935,7 +2070,45 @@ this model for the whole call. Blank is the shipped path: cache plus live voice.
     return actx;
   }
 
-  function beginStream(rate) {
+  async function ensureWorklet(ctx) {
+    if (!ctx || !ctx.audioWorklet || typeof AudioWorkletNode === "undefined") return false;
+    if (workletPlayback && workletPlayback.context === ctx) return true;
+    if (workletLoading) return workletLoading;
+    workletLoading = (async function () {
+      try {
+        await ctx.audioWorklet.addModule("/voice-worklet.js");
+        var node = new AudioWorkletNode(ctx, "voice-playback", {numberOfInputs:0,
+          numberOfOutputs:1, outputChannelCount:[1]});
+        node.connect(ctx.destination);
+        node.port.onmessage = function (event) {
+          if (workletPlayback !== node) return;
+          var m = event.data, a = workletActive;
+          if (!a || audioProtocol.active !== a || m.id !== a.generation + ":" + a.audio_id) return;
+          if (m.type === "started") schedulePlaybackMeasurement(ctx, m.context_time);
+          if (m.type === "consumed") send({type:"audio_consumed", generation:a.generation,
+            audio_id:a.audio_id, samples:m.samples});
+          if (m.type === "done") {
+            a.underrun_ms = m.underrun_ms;
+            workletActive = null; setSpeaker(null); playbackDone();
+          }
+          if (m.type === "playback_error") failWorklet(m.reason);
+        };
+        node.onprocessorerror = function () { failWorklet("Audio processor stopped"); };
+        workletPlayback = node;
+        return true;
+      } catch (e) { return false; }
+      finally { workletLoading = null; }
+    })();
+    return workletLoading;
+  }
+  function failWorklet(reason) {
+    var a = workletActive;
+    stopPlayback();
+    if (a) send({type:"playback_error", generation:a.generation, audio_id:a.audio_id});
+    addSys(reason + ". Restart the call to restore audio.", false);
+  }
+
+  function beginStream(rate, flowControl) {
     var ctx = ensureCtx();
     if (!ctx) return false;
     if (ctx.state === "suspended") { try { ctx.resume(); } catch (e) {} }
@@ -1944,10 +2117,23 @@ this model for the whole call. Blank is the shipped path: cache plus live voice.
     stopStream();
     pend = []; pendN = 0; pendRate = rate || 16000;
     playHead = 0;
+    if (flowControl) {
+      if (!workletPlayback) return false;
+      var a = audioProtocol.active;
+      workletActive = a;
+      workletPlayback.port.postMessage({type:"begin", id:a.generation + ":" + a.audio_id, rate:pendRate});
+    }
     return true;
   }
 
   function feedStream(frame) {
+    if (workletActive) {
+      // Replay retains the incoming packet; transfer only a bounded copy.
+      var copy = frame.slice();
+      workletPlayback.port.postMessage({type:"pcm",
+        id:workletActive.generation + ":" + workletActive.audio_id, pcm:copy}, [copy.buffer]);
+      return;
+    }
     pend.push(frame); pendN += frame.length;
     if (pendN / pendRate >= FLUSH_SEC) flushStream();
   }
@@ -1967,18 +2153,27 @@ this model for the whole call. Blank is the shipped path: cache plus live voice.
     // scheduling in the past, which would drop the piece entirely.
     if (playHead < now + LEAD_SEC) playHead = now + LEAD_SEC;
     try { src.start(playHead); } catch (e) { return; }
+    schedulePlaybackMeasurement(actx, playHead);
     playHead += buf.duration;
     streamSrcs.push(src);
     src.onended = function () {
       var i = streamSrcs.indexOf(src);
       if (i >= 0) streamSrcs.splice(i, 1);
       if (!streamSrcs.length && speaker === "a") setSpeaker(null);
+      playbackDone();
     };
   }
 
-  function endStream() { flushStream(); }
+  function endStream() {
+    if (workletActive) {
+      workletPlayback.port.postMessage({type:"end",
+        id:workletActive.generation + ":" + workletActive.audio_id});
+    } else flushStream();
+  }
 
   function stopStream() {
+    if (workletPlayback) workletPlayback.port.postMessage({type:"stop"});
+    workletActive = null;
     streamSrcs.forEach(function (s) { try { s.onended = null; s.stop(); } catch (e) {} });
     streamSrcs = []; pend = []; pendN = 0; playHead = 0;
   }
@@ -1995,7 +2190,8 @@ this model for the whole call. Blank is the shipped path: cache plus live voice.
 
   // ------------------------------------------------------------------ mic
 
-  var SR = 16000, SILENCE_MS = 700, PREROLL = 44;
+  var SR = 16000, PREROLL = 44;
+  var endpointer = new VoiceEndpointing(), vadDetector = null;
   // Fixed thresholds assume a quiet room. In a noisy one the floor sits above
   // them, every rustle counts as speech, and the recogniser invents sentences
   // over it. Calibrate against the actual room instead.
@@ -2055,7 +2251,7 @@ this model for the whole call. Blank is the shipped path: cache plus live voice.
   })();
 
   var actx = null, micStream = null, micNode = null, micSrc = null;
-  var micOn = false, talking = false, lastVoice = 0, preroll = [];
+  var micOn = false, micStarting = false, micEpoch = 0, talking = false, lastVoiceMono = null, preroll = [];
   var floor = 0.006, calibN = 0, voicedMs = 0, armedMs = 0;
 
   function downsample(buf, rate) {
@@ -2076,10 +2272,12 @@ this model for the whole call. Blank is the shipped path: cache plus live voice.
     }
     return o.buffer;
   }
-  function onFrame(f32, rate) {
+  function onFrame(f32, rate, capturedAt, probability) {
     var mono = downsample(f32, rate), sum = 0;
     for (var i = 0; i < mono.length; i++) sum += mono[i] * mono[i];
-    var rms = Math.sqrt(sum / mono.length), now = Date.now();
+    if (!mono.length) return;
+    var rms = Math.sqrt(sum / mono.length);
+    var neural = Number.isFinite(probability) && probability >= 0 && probability <= 1;
     var frameMs = (mono.length / SR) * 1000;
 
     // Track the quiet floor while nobody is talking, so the threshold follows
@@ -2100,7 +2298,7 @@ this model for the whole call. Blank is the shipped path: cache plus live voice.
     // were being averaged into the floor — the softer they spoke the higher
     // the bar went. Rise slowly, fall quickly: a room that gets noisier can
     // wait, a room that goes quiet should be believed at once.
-    if (!talking && !agentSpeaking && rms < onThreshold) {
+    if (!talking && !agentSpeaking && rms < onThreshold && (!neural || probability < 0.25)) {
       floor = calibN < 25 ? (floor * calibN + rms) / (calibN + 1)
             : rms < floor ? floor * 0.94 + rms * 0.06
                           : floor * 0.997 + rms * 0.003;
@@ -2112,15 +2310,18 @@ this model for the whole call. Blank is the shipped path: cache plus live voice.
       // One loud frame while the agent talks is a cough, a keyboard, or our
       // own audio leaking past the echo canceller. Acting on it killed the
       // line mid-sentence for no reason the caller could see.
-      armedMs = rms > onThreshold ? armedMs + frameMs : 0;
-      if (armedMs > 0 && armedMs >= (agentSpeaking ? BARGE_MS : 0)) {
+      var onset = neural ? probability >= (agentSpeaking ? 0.7 : 0.6) && (!agentSpeaking || rms > onThreshold) : rms > onThreshold;
+      armedMs = onset ? armedMs + frameMs : 0;
+      if (armedMs > 0 && armedMs >= (agentSpeaking ? BARGE_MS : 40)) {
         // Read before it is cleared. Written the other way round the barge
         // dwell counted as zero, so the 260 ms it had already swallowed of
         // the caller's first word was never sent.
         var armed = armedMs;
-        talking = true; voicedMs = armed; armedMs = 0;
+        talking = true; voicedMs = Math.max(0, armed - frameMs); armedMs = 0;
+        endpointer.mode = $("endpointMode").value;
+        endpointer.reset(voicedMs);
         setOrb("hearing");
-        if (agentSpeaking) { stopPlayback(); send({ type: "barge_in" }); }
+        if (agentSpeaking || responsePending) { send({ type: "barge_in" }); }
         // Send only the run-up we actually need — enough to recover the word
         // onset, plus whatever the dwell has already swallowed. The whole ring
         // buffer would staple half a second of silence to the front of every
@@ -2129,18 +2330,23 @@ this model for the whole call. Blank is the shipped path: cache plus live voice.
         preroll.slice(-need).forEach(sendBin); preroll = [];
       }
     }
-    if (rms > offThreshold) { lastVoice = now; if (talking) voicedMs += frameMs; }
+    var voice = neural ? probability >= 0.35 : rms > offThreshold;
+    if (voice) { lastVoiceMono = Number.isFinite(capturedAt) ? capturedAt : performance.now(); if (talking) voicedMs += frameMs; }
 
     var buf = pcm16(mono);
     if (talking) {
-      sendBin(buf);
-      if (now - lastVoice > SILENCE_MS) {
+      if (!sendBin(buf)) return;
+      endpointer.observe(voice, frameMs, rms / floor, neural ? probability : null);
+      var reason = endpointer.decision();
+      if (reason) {
         talking = false;
         setOrb(micOn ? "on" : "muted");
         if (voicedMs >= MIN_VOICED_MS) {
           // The endpointer's wait is part of what the caller experiences as
           // the pause before the reply, so the server counts it.
-          send({ type: "utterance_end", trailing_ms: SILENCE_MS });
+          send({ type: "utterance_end", trailing_ms: endpointer.silence, speech_end_ms: lastVoiceMono,
+            endpoint_target_ms: endpointer.target(), endpoint_reason: reason,
+            endpoint_policy: endpointer.mode, speech_detector: neural ? "silero-v5" : "energy" });
           setWorking(true);
         } else {
           // A blip, not a turn. Sending it invites the recogniser to invent
@@ -2151,30 +2357,94 @@ this model for the whole call. Blank is the shipped path: cache plus live voice.
       }
     } else { preroll.push(buf); if (preroll.length > PREROLL) preroll.shift(); }
   }
+  function preparingMic() {
+    micStarting = true;
+    setOrb("starting");
+    $("vadStatus").textContent = "Preparing microphone and speech detector…";
+  }
   async function micStart() {
+    if (micOn || micStarting) return;
+    var epoch = ++micEpoch;
     if (!live) { addSys("Microphone needs the local server.", false);
                  setOrb(running ? "muted" : "idle"); return; }
+    preparingMic();
     try {
-      micStream = await navigator.mediaDevices.getUserMedia({
+      var acquiredStream = await navigator.mediaDevices.getUserMedia({
         audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true,
                  autoGainControl: true } });
-    } catch (e) { addSys("Microphone permission denied — typing still works.", false);
+    } catch (e) { if (epoch !== micEpoch) return;
+                  micStarting = false;
+                  $("vadStatus").textContent = "Microphone unavailable";
+                  addSys("Microphone permission denied — typing still works.", false);
                   setOrb(running ? "muted" : "idle"); return; }
-    actx = new (window.AudioContext || window.webkitAudioContext)();
-    micSrc = actx.createMediaStreamSource(micStream);
-    var rate = actx.sampleRate;
-    micNode = actx.createScriptProcessor(1024, 1, 1);
-    micNode.onaudioprocess = function (e) { if (micOn) onFrame(e.inputBuffer.getChannelData(0), rate); };
-    micSrc.connect(micNode); micNode.connect(actx.destination);
-    micOn = true;
+    if (epoch !== micEpoch) { acquiredStream.getTracks().forEach(t => t.stop()); return; }
+    micStream = acquiredStream;
+    try {
+    var ctx = ensureCtx();
+    try { await ctx.resume(); } catch (e) {}
+    var available = await ensureWorklet(ctx);
+    if (epoch !== micEpoch) return;
+    var detector = await NeuralVoiceDetector.create(function (pcm, at, probability) {
+      if (epoch === micEpoch && micOn) onFrame(pcm, SR, at, probability);
+    }, function () {
+      if (epoch !== micEpoch) return;
+      vadDetector = null;
+      // Inference lost continuity. Discard this turn instead of splicing audio.
+      talking = false; preroll = []; armedMs = 0; voicedMs = 0; endpointer.reset();
+      send({type:"discard_utterance"});
+      setOrb("on");
+      $("vadStatus").textContent = "Speech detector: energy fallback";
+      addSys("Speech detector fell behind. Please repeat your last reply; microphone remains on.", false);
+    });
+    if (epoch !== micEpoch) { if (detector) detector.close(); return; }
+    vadDetector = detector;
+    $("vadStatus").textContent = detector ? "Speech detector: neural (local CPU)" : "Speech detector: energy fallback";
+    micSrc = ctx.createMediaStreamSource(micStream);
+    var rate = ctx.sampleRate;
+    if (available) {
+      var node = new AudioWorkletNode(ctx, "voice-capture", {numberOfInputs:1,
+        numberOfOutputs:1, outputChannelCount:[1]});
+      micNode = node;
+      node.port.onmessage = function (event) {
+        if (micNode !== node || epoch !== micEpoch) return;
+        var m = event.data;
+        if (m.type === "capture_error") { micStop(); send({type:"discard_utterance"}); addSys(m.reason, false); return; }
+        if (m.type === "capture") {
+          if (micOn) {
+            var at = performance.now() - Math.max(0, ctx.currentTime - m.context_time) * 1000;
+            if (vadDetector) vadDetector.push(m.pcm, at); else onFrame(m.pcm, SR, at);
+          }
+          node.port.postMessage({type:"ack"});
+        }
+      };
+      node.onprocessorerror = function () { micStop(); send({type:"discard_utterance"}); addSys("Microphone processor stopped.", false); };
+    } else {
+      micNode = ctx.createScriptProcessor(1024, 1, 1);
+      micNode.onaudioprocess = function (e) {
+        if (!micOn) return;
+        var pcm = downsample(e.inputBuffer.getChannelData(0), rate), at = performance.now();
+        if (vadDetector) vadDetector.push(pcm, at); else onFrame(pcm, SR, at);
+      };
+      addSys("Using compatibility microphone capture.", true);
+    }
+    micSrc.connect(micNode); micNode.connect(ctx.destination);
+    micOn = true; micStarting = false;
     setOrb("on");
+    } catch (e) {
+      micStop();
+      addSys("Microphone audio could not start — typing still works.", false);
+    }
   }
   function micStop() {
-    micOn = false; talking = false; preroll = []; armedMs = 0;
-    if (micNode) { micNode.disconnect(); micNode.onaudioprocess = null; micNode = null; }
+    micEpoch++;
+    micOn = false; micStarting = false; talking = false; preroll = []; armedMs = 0; voicedMs = 0;
+    if (vadDetector) { vadDetector.close(); vadDetector = null; }
+    endpointer.reset(); lastVoiceMono = null;
+    $("vadStatus").textContent = "Speech detector: microphone off";
+    if (micNode) { if (micNode.port) micNode.port.postMessage({type:"stop"}); micNode.disconnect(); micNode.onaudioprocess = null; micNode = null; }
     if (micSrc) { micSrc.disconnect(); micSrc = null; }
     if (micStream) { micStream.getTracks().forEach(function (t) { t.stop(); }); micStream = null; }
-    if (actx) { actx.close(); actx = null; }
+    // Keep the shared output context alive when the microphone is muted.
     setOrb(running ? "muted" : "idle");
   }
   // ---------------------------------------------------------------- orb
@@ -2190,6 +2460,10 @@ this model for the whole call. Blank is the shipped path: cache plus live voice.
     if (state === "idle") {
       $("orbLabel").textContent = "Start call";
       orb.setAttribute("aria-label", "Start call");
+      orb.setAttribute("aria-pressed", "false");
+    } else if (state === "starting") {
+      $("orbLabel").textContent = "Preparing microphone — tap to cancel";
+      orb.setAttribute("aria-label", "Cancel microphone startup");
       orb.setAttribute("aria-pressed", "false");
     } else if (state === "muted") {
       orb.classList.add("muted");
@@ -2211,7 +2485,7 @@ this model for the whole call. Blank is the shipped path: cache plus live voice.
 
   $("orb").addEventListener("click", function () {
     if (!running) { beginCall(false); micStart(); return; }
-    micOn ? micStop() : micStart();
+    (micOn || micStarting) ? micStop() : micStart();
   });
   $("btnEnd").addEventListener("click", function () {
     if (running) { send({ type: "hangup" }); stop(false); }

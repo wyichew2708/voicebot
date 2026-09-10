@@ -250,7 +250,8 @@ class PrerenderCache:
             return None
         try:
             with wave.open(str(p)) as w:
-                if w.getframerate() != self.sample_rate or w.getnchannels() != 1:
+                if (w.getframerate() != self.sample_rate or w.getnchannels() != 1
+                        or w.getsampwidth() != 2 or w.getnframes() == 0):
                     return None            # stale format, regenerate
                 return w.readframes(w.getnframes())
         except Exception:                  # pragma: no cover - corrupt file

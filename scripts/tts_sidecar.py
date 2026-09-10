@@ -28,6 +28,8 @@ same code the Mac uses rather than a second implementation of it.
 from __future__ import annotations
 
 import argparse
+import asyncio
+import sys
 import io
 import logging
 import os
@@ -45,6 +47,11 @@ app = FastAPI(title="voicebot TTS sidecar")
 _state: dict = {}
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "src"))
+from voicebot.runtime.workers import BoundedExecutor, InferenceBusy
+
+_worker = BoundedExecutor(1, 2, thread_name_prefix="tts-gpu")
+
 REFS = {"male": ROOT / "voices/refs/male.wav",
         "female": ROOT / "voices/refs/female.wav"}
 
@@ -671,25 +678,39 @@ def _model():
     return _state["m"]
 
 
+@app.on_event("startup")
+async def startup():
+    await asyncio.get_running_loop().run_in_executor(_worker, _model)
+
+
+@app.on_event("shutdown")
+async def shutdown():
+    _worker.shutdown(wait=False, cancel_futures=True)
+
+
 @app.get("/health")
 async def health() -> JSONResponse:
     engine = _state.get("engine")
     if engine is None and "m" in _state:
         engine = _engine()          # a model is loaded: name the engine it belongs to
+    ready = "m" in _state
+    # 503 until a model is loaded, not a 200 with ready:false. The backend
+    # turns 429 and 503 into InferenceBusy, so a sidecar still warming up is
+    # a turn that waits rather than a turn that fails.
     return JSONResponse({
-        "ready": "m" in _state,
+        "ready": ready,
         "device": _state.get("dev", "?"),
         "engine": engine.name if engine else None,
+        # Named from the engine that is actually loaded. Hardcoding
+        # chatterbox here would misreport every other candidate.
         "model": engine.model_id if engine else None,
         "languages": sorted(engine.languages) if engine and engine.languages else None,
         "clones": engine.clones if engine else None,
-    })
+    }, status_code=200 if ready else 503)
 
 
 @app.post("/tts")
 async def tts(request: Request) -> Response:
-    import numpy as np
-
     body = await request.json()
     text = body.get("text", "")
     voice = body.get("voice", "male")
@@ -717,14 +738,24 @@ async def tts(request: Request) -> Response:
                      f"(speaks: {', '.join(sorted(engine.languages or []))})").encode())
 
     ref = _reference(body.get("ref_audio"), voice)
-    if ref is None and body.get("ref_audio"):
+    if ref is None:
         return Response(status_code=400,
-                        content=f"reference clip not found: {body['ref_audio']}".encode())
+                        content=f"reference clip not found: {body.get('ref_audio')!r}".encode())
     if ref is not None and not engine.clones and not _state.get("warned_no_clone"):
         _state["warned_no_clone"] = True
         log.warning("%s does not clone: the reference clip is ignored and a "
                     "preset speaker is used", engine.name)
     ref_text = _reference_text(ref, body.get("ref_text"))
+
+    # Refuse rather than queue. A model still loading, or a request outside
+    # anything an engine here will do, must not occupy the one GPU worker
+    # while a caller waits on the turn behind it.
+    if "m" not in _state:
+        return Response(status_code=503, content=b"TTS is not ready",
+                        headers={"Retry-After": "1"})
+    if len(text) > 4000 or target_sr not in (16000, 24000, 48000):
+        return Response(status_code=400,
+                        content=b"unsupported text length or sample rate")
 
     # Which preset a non-cloning engine picks. The console sends the voice's
     # gender; an older caller sends only a voice id, which is enough when
@@ -734,12 +765,34 @@ async def tts(request: Request) -> Response:
         gender = voice if voice in ("male", "female") else "male"
     t0 = time.time()
     try:
-        if isinstance(engine, (Kokoro, VibeVoice)):
-            audio, src_sr = engine.synth(text, lang, ref, ref_text, gender=gender)
-        else:
-            audio, src_sr = engine.synth(text, lang, ref, ref_text)
+        wav = await asyncio.get_running_loop().run_in_executor(
+            _worker, _render, engine, text, lang, ref, ref_text, gender, target_sr)
     except Unsupported as exc:
         return Response(status_code=400, content=str(exc).encode())
+    except InferenceBusy:
+        return Response(status_code=503, content=b"TTS capacity is full",
+                        headers={"Retry-After": "1"})
+    ms = int((time.time() - t0) * 1000)
+    log.info("%d ms  %s [%s] %r", ms, engine.name, lang, text[:48])
+    return Response(content=wav, media_type="audio/wav",
+                    headers={"X-Engine": engine.name, "X-Synth-Ms": str(ms)})
+
+
+def _render(engine, text, lang, ref, ref_text, gender, target_sr):
+    """One fragment, synthesised and encoded, on the one bounded GPU worker.
+
+    Everything expensive lives here rather than in the handler: two requests
+    rendering at once do not go twice as fast, they take twice as long each,
+    and on a call that is two turns of dead air instead of one. Resampling
+    and encoding come along for the ride so the event loop is free while a
+    turn is being made.
+    """
+    import numpy as np
+
+    if isinstance(engine, (Kokoro, VibeVoice)):
+        audio, src_sr = engine.synth(text, lang, ref, ref_text, gender=gender)
+    else:
+        audio, src_sr = engine.synth(text, lang, ref, ref_text)
     audio = np.asarray(audio, dtype=np.float32).squeeze()
     if audio.ndim == 0:
         audio = audio.reshape(1)
@@ -756,10 +809,7 @@ async def tts(request: Request) -> Response:
         w.setsampwidth(2)
         w.setframerate(target_sr)
         w.writeframes((np.clip(audio, -1, 1) * 32767).astype(np.int16).tobytes())
-    ms = int((time.time() - t0) * 1000)
-    log.info("%d ms  %s [%s] %r", ms, engine.name, lang, text[:48])
-    return Response(content=buf.getvalue(), media_type="audio/wav",
-                    headers={"X-Engine": engine.name, "X-Synth-Ms": str(ms)})
+    return buf.getvalue()
 
 
 def main() -> None:

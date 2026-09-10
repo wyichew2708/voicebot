@@ -27,11 +27,19 @@ models:               ## pre-download MLX weights so a demo never waits
 test:
 	$(PY) -m pytest tests -q
 
+.PHONY: test-ui
+test-ui:              ## audio protocol and console socket tests (Node.js required)
+	node --test tests/realtime-audio.test.cjs tests/worklet.test.cjs tests/endpointing.test.cjs
+
 eval:                 ## replay every recorded call through the engine (keyword layer)
 	$(PY) scripts/eval.py
 
 eval-live:            ## the same, with the models in the loop — reports guardrail latency
 	$(PY) scripts/eval.py --live
+
+.PHONY: latency-report
+latency-report:       ## summarize recorded browser playback and backend timings
+	$(PY) scripts/latency_report.py
 
 # ------------------------------------------------------------- knowledge base
 # The OKF bundle in knowledge/. See docs/knowledge-layer.md.
@@ -148,3 +156,11 @@ tts-bench:            ## the Singapore insurance sentence set through models or 
 	##   make tts-bench TARGETS="cosyvoice3=http://127.0.0.1:8803"   (a sidecar by address)
 	$(PY) scripts/tts_bench.py --profile $(PROFILE) $(foreach m,$(MODELS),--model $(m)) $(TARGETS) $(BENCH_ARGS)
 	@echo "open voices/bench/latest/index.html"
+
+# ------------------------------------------------------- local speech detector
+.PHONY: setup-vad check-vad
+setup-vad:            ## download pinned local CPU speech detector assets
+	$(PY) scripts/setup_vad.py
+
+check-vad:            ## run real VAD model and WASM on CPU (requires setup-vad and Node.js)
+	node scripts/check_vad.cjs

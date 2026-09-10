@@ -11,10 +11,12 @@
 # Accuracy on real Singaporean speech is still unmeasured — see README.
 profile: mlx
 backend:
+  inference:
+    max_pending: 2  # queued native jobs beyond the one running MLX job
   llm:
     # 23 GB on disk, ~3B active parameters per token. Loaded once at startup
-    # for the guardrail; it is not in the 40 GB budget because the same model
-    # is already resident on the GPU server this ships to.
+    # for the guardrail. It DOES count toward this Mac's memory budget;
+    # measure peak unified memory with ASR and the selected TTS loaded.
     model: mlx-community/Qwen3.6-35B-A3B-OptiQ-4bit
     max_tokens: 220
   asr:
@@ -23,11 +25,10 @@ backend:
     # No initial_prompt: qwen3_asr does not take one, and the backend falls
     # back cleanly if it is set.
   tts:
-    # Live voice: improvised lines only, where 200 ms matters.
+    # Used only without a prerender model. With the clone configured below,
+    # that clone is the sole resident TTS for both cached and novel lines.
     model: mlx-community/Kokoro-82M-4bit
-    # The live voice's own Mandarin speaker. Reached only when the pre-render
-    # model is unavailable — and reached without this, a Mandarin line went
-    # through the English phonemiser as af_heart.
+    # Preset Mandarin speaker when running without the clone configuration.
     voices:
       zh: {voice: zm_yunjian, code: z}
     # Scripted turns are rendered once by a better model and played from disk.

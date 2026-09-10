@@ -17,6 +17,30 @@ import pytest
 from voicebot.runtime.cuda_backend import CUDABackend
 
 
+import contextlib
+
+
+@contextlib.contextmanager
+def caplog_at(level):
+    """Capture voicebot.cuda records without pytest's caplog fixture, which
+    the rewritten test cannot take alongside `pytest.raises`."""
+    import logging
+
+    class _Grab(logging.Handler):
+        text = ""
+
+        def emit(self, record):
+            _Grab.text += self.format(record) + "\n"
+
+    log = logging.getLogger("voicebot.cuda")
+    h = _Grab(); h.setLevel(level); _Grab.text = ""
+    log.addHandler(h); old = log.level; log.setLevel(level)
+    try:
+        yield _Grab
+    finally:
+        log.removeHandler(h); log.setLevel(old)
+
+
 def _wav(seconds=0.4, rate=16000):
     buf = io.BytesIO()
     with wave.open(buf, "wb") as w:
@@ -130,6 +154,50 @@ def test_a_cache_miss_falls_back_to_live_tts(tmp_path, stub):
     assert [s for s in S.seen if s[0] == "/tts"], "expected a live TTS request"
 
 
+def test_failed_tts_is_not_successful_empty_audio(monkeypatch, tmp_path):
+    be = CUDABackend(_cfg('http://unused', tts={'model':'chatterbox',
+                      'prerender':{'cache_dir':str(tmp_path)}}))
+    def fail(*args, **kwargs):
+        # **kwargs because the TTS budget reaches _post as `timeout=`: the
+        # candidates behind this contract are not all 0.5B and the ASR's
+        # 30 s is not theirs.
+        raise RuntimeError('service unavailable')
+    monkeypatch.setattr(be, '_post', fail)
+    try:
+        with pytest.raises(RuntimeError, match='service unavailable'):
+            asyncio.run(be.speak('hello','en',False))
+    finally:
+        be.close()
+
+
+def test_mismatched_cached_and_live_models_are_refused(tmp_path):
+    cfg = _cfg('http://unused')
+    cfg['tts']['prerender'] = {'model':'another-speaker-model', 'cache_dir':str(tmp_path)}
+    with pytest.raises(ValueError, match='same configured model'):
+        CUDABackend(cfg)
+
+
+def test_live_voice_uses_the_cache_rate_before_pitch(monkeypatch, tmp_path):
+    from voicebot import pcm as P
+    cfg = _cfg('http://unused')
+    cfg['tts']['prerender'] = {'cache_dir':str(tmp_path),
+                               'voices':{'female':{'rate':1.1}}}
+    be = CUDABackend(cfg)
+    seen = []
+    monkeypatch.setattr(be, '_speak_one', lambda *a: b'\1\0'*100)
+    def stretch(pcm, rate, sr):
+        seen.append(('rate', rate)); return pcm
+    def pitch(pcm, voice, lang):
+        seen.append(('pitch', voice)); return pcm
+    monkeypatch.setattr(P, 'stretch', stretch)
+    monkeypatch.setattr(be.prerender, 'normalise_pitch', pitch)
+    try:
+        asyncio.run(be.speak('hello', 'en', False, 'female'))
+        assert seen == [('rate', 1.1), ('pitch', 'female')]
+    finally:
+        be.close()
+
+
 def test_health_is_not_ready_when_a_service_is_down():
     be = CUDABackend(_cfg("http://127.0.0.1:9"))     # discard port: nothing there
     h = be.health()
@@ -191,16 +259,26 @@ def test_the_tts_budget_reaches_the_request_and_asr_keeps_its_own(stub):
     assert ("transcriptions", 30) in seen, seen
 
 
-def test_a_failed_tts_says_the_turn_will_be_silent(caplog):
-    """Empty audio is indistinguishable from a quiet line anywhere
-    downstream, so the log has to be the thing that says it."""
+def test_a_failed_tts_is_raised_and_says_which_engine_ran_out_of_time():
+    """Two things, and both matter.
+
+    Empty audio is indistinguishable from a quiet line anywhere downstream,
+    so the failure is raised rather than returned — an unspoken turn must not
+    be acknowledged as a delivered one.
+
+    And the exception alone does not say which of the candidate engines ran
+    out of time, or what to change. The log names the engine, the budget and
+    the setting, because on a box serving several models "TTS failed" is not
+    a diagnosis.
+    """
     import logging
 
     be = CUDABackend(_cfg("http://127.0.0.1:9"))     # discard port: nothing there
-    with caplog.at_level(logging.ERROR, logger="voicebot.cuda"):
-        pcm = asyncio.run(_drain(be.synthesize("No problem.", "en", "male")))
-    assert pcm == b""
-    assert "SILENT" in caplog.text and "timeout_s" in caplog.text
+    with caplog_at(logging.ERROR) as caplog:
+        with pytest.raises(Exception):
+            asyncio.run(_drain(be.synthesize("No problem.", "en", "male")))
+    assert "produced no audio" in caplog.text
+    assert "timeout_s" in caplog.text, "the log must name the setting that fixes it"
 
 
 # ------------------------------------------------------- container contract

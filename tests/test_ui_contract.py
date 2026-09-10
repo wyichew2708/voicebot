@@ -168,7 +168,7 @@ def test_a_refused_microphone_does_not_leave_the_orb_claiming_to_listen():
     listening while nothing is captured."""
     ui = _ui_text()
     body = ui[ui.index("async function micStart"):ui.index("function micStop")]
-    assert body.count("setOrb(") == 3, "an early return out of micStart leaves a stale orb state"
+    assert body.count("setOrb(") == 4, "an early return out of micStart leaves a stale orb state"
 
 
 def test_barge_in_needs_sustained_speech_not_one_loud_frame():
@@ -178,7 +178,7 @@ def test_barge_in_needs_sustained_speech_not_one_loud_frame():
     assert "BARGE_MS" in ui and "BARGE_MARGIN" in ui
     frame = ui[ui.index("function onFrame"):ui.index("async function micStart")]
     assert "armedMs > 0 &&" in frame, "silence would open a turn"
-    assert "agentSpeaking ? BARGE_MS : 0" in frame, "barge-in has no dwell time"
+    assert "agentSpeaking ? BARGE_MS : 40" in frame, "barge-in has no dwell time"
     assert "agentSpeaking ? BARGE_MARGIN : NOISE_MARGIN" in frame
 
 
@@ -361,7 +361,7 @@ def test_the_wait_for_a_reply_is_shown():
     # It has to start where the caller's turn ends, both ways in.
     assert 'send({ type: "utterance_end"' in ui
     tail = ui[ui.index('send({ type: "utterance_end"'):]
-    assert "setWorking(true)" in tail[:200], "speech turn shows no wait"
+    assert "setWorking(true)" in tail[tail.index("});") + 3:][:80], "speech turn shows no wait"
     for at in range(len(ui)):
         at = ui.find('send({ type: "say"', at)
         if at < 0:

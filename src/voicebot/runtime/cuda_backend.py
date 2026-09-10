@@ -25,11 +25,12 @@ import time
 import urllib.error
 import urllib.request
 import wave
-from concurrent.futures import ThreadPoolExecutor
 from typing import Any, AsyncIterator
 
+from ..telemetry import measured_worker
 from ..lang import detect as detect_lang
 from .base import Backend, BackendHealth, Completion, Speech, TranscriptResult
+from .workers import BoundedExecutor, InferenceBusy
 
 log = logging.getLogger("voicebot.cuda")
 
@@ -52,12 +53,20 @@ class CUDABackend(Backend):
         self._errors: list[str] = []
         # Requests are blocking urllib calls; a small pool keeps them off the
         # event loop without pulling in another dependency.
-        self._pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="cuda-http")
+        self._pool = BoundedExecutor(4, cfg.get("inference", {}).get("max_pending", 2),
+                                     thread_name_prefix="cuda-http")
+        self._io = BoundedExecutor(2, 8, thread_name_prefix="voice-cache")
         self.tts_timeout = float(cfg.get("tts", {}).get("timeout_s")
                                  or os.environ.get("VOICEBOT_TTS_TIMEOUT") or TTS_TIMEOUT)
         from .prerender import PrerenderCache
         self.prerender = PrerenderCache(cfg.get("tts", {}).get("prerender", {}),
                                         self.sample_rate)
+        cached_model = self.prerender.cfg.get("model", "").split("/")[-1]
+        live_model = cfg.get("tts", {}).get("model", "").split("/")[-1]
+        if cached_model and cached_model != live_model:
+            self.close()
+            raise ValueError("Cached and live TTS must use the same configured model")
+        self._same_voice_model = bool(cached_model and cached_model == live_model)
         # Candidate models, one sidecar each, switchable at runtime. Built
         # only for the console's own backend: a lab per throwaway backend
         # would recurse into itself (see SidecarLab._backend_for).
@@ -69,7 +78,7 @@ class CUDABackend(Backend):
     # ------------------------------------------------------------- helpers
 
     async def _run(self, fn, *args):
-        return await asyncio.get_running_loop().run_in_executor(self._pool, fn, *args)
+        return await measured_worker(self._pool, fn, *args)
 
     @staticmethod
     def _post(url: str, data: bytes, content_type: str,
@@ -78,8 +87,13 @@ class CUDABackend(Backend):
         req = urllib.request.Request(url, data=data, method="POST",
                                      headers={"Content-Type": content_type,
                                               **(headers or {})})
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return resp.read()
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return resp.read()
+        except urllib.error.HTTPError as exc:
+            if exc.code in (429, 503):
+                raise InferenceBusy("Voice service is busy or not ready") from exc
+            raise
 
     def _wav(self, pcm: bytes) -> bytes:
         buf = io.BytesIO()
@@ -115,6 +129,8 @@ class CUDABackend(Backend):
 
         try:
             text = await self._run(_work)
+        except InferenceBusy:
+            raise
         except Exception as exc:                        # pragma: no cover
             log.warning("ASR request failed: %s", exc)
             self._errors.append(f"asr: {exc}")
@@ -144,6 +160,8 @@ class CUDABackend(Backend):
 
         try:
             text = await self._run(_work)
+        except InferenceBusy:
+            raise
         except Exception as exc:                        # pragma: no cover
             log.warning("LLM request failed: %s", exc)
             return Completion(text="", latency_ms=0)
@@ -154,10 +172,8 @@ class CUDABackend(Backend):
     def cached(self, text: str, lang: str, voice: str | None = None) -> bool:
         """Whether this exact line is already rendered to disk.
 
-        Same cache and same keys as the Mac — the two profiles are checked
-        against each other precisely so a line rendered on one is a hit on the
-        other. It matters more here: a miss on this box does not render, it
-        drops to the live voice, which is a different speaker mid-call.
+        Same cache and same keys as the Mac. A miss uses the configured TTS
+        service with the same reference, segmentation and pitch settings.
         """
         try:
             return self.prerender.path(text, lang, voice).exists()
@@ -172,19 +188,17 @@ class CUDABackend(Backend):
         if trial is not None:
             return trial
         if prerendered:
-            cached = await self._run(self.prerender.get, text, lang, voice)
+            cached = await measured_worker(self._io, self.prerender.get, text, lang, voice)
             if cached is not None:
                 return Speech(voice_source="cache", pcm=cached, sample_rate=self.sample_rate,
                               latency_ms=int((time.perf_counter() - t0) * 1000))
-            # No render-on-miss here. On a Mac a miss costs a slow line; on a
-            # call server it would stall the turn behind a model load. Warm the
-            # cache with `make prerender` and ship it — misses fall through to
-            # the live voice instead.
+            # The sidecar owns its resident model; this process never loads it.
             log.warning("pre-render miss on the server for %r — using live TTS",
                         text[:48])
 
         chunks = [c async for c in self.synthesize(text, lang, voice)]
-        return Speech(voice_source="live", pcm=b"".join(chunks), sample_rate=self.sample_rate,
+        return Speech(voice_source="live", voice_consistent=self._same_voice_model,
+                      pcm=b"".join(chunks), sample_rate=self.sample_rate,
                       latency_ms=int((time.perf_counter() - t0) * 1000))
 
     def _speak_one(self, piece: str, lang_code: str, voice: str,
@@ -211,9 +225,9 @@ class CUDABackend(Backend):
         raw = self._post(url, json.dumps(body).encode(), "application/json",
                          timeout=self.tts_timeout)
         with wave.open(io.BytesIO(raw)) as w:
-            if w.getframerate() != self.sample_rate:
-                log.warning("TTS returned %d Hz, expected %d",
-                            w.getframerate(), self.sample_rate)
+            if (w.getframerate() != self.sample_rate or w.getnchannels() != 1
+                    or w.getsampwidth() != 2 or w.getnframes() == 0):
+                raise ValueError("TTS returned an empty or incompatible PCM WAV")
             return w.readframes(w.getnframes())
 
     async def synthesize(self, text: str, lang: str,
@@ -248,21 +262,28 @@ class CUDABackend(Backend):
                     if i:
                         out += P.silence(40, self.sample_rate)
                 out += part
-            return self.prerender.normalise_pitch(bytes(out), voice, lang)
+            pcm = bytes(out)
+            rate = self.prerender.rate_for(voice, lang)
+            if abs(rate - 1.0) > 0.001 and pcm:
+                pcm = P.stretch(pcm, rate, self.sample_rate)
+            return self.prerender.normalise_pitch(pcm, voice, lang)
 
         try:
             pcm = await self._run(_work)
         except Exception as exc:
-            # Nothing downstream can tell empty audio from a quiet line, so
-            # say plainly that this turn will be silent and why. A timeout is
-            # the likely one on a slow or overloaded engine — name the budget
-            # so the fix (backend.tts.timeout_s) is obvious from the log.
-            log.error("TTS failed, this turn will be SILENT: %s "
-                      "(engine %s, %.0fs budget — raise backend.tts.timeout_s "
-                      "or VOICEBOT_TTS_TIMEOUT if it needs longer)",
+            # Both halves of this matter. Nothing downstream can tell empty
+            # audio from a quiet line, so the failure is raised rather than
+            # returned — an unspoken turn must not be acknowledged as a
+            # delivered one. And a timeout is the likely cause on a slow or
+            # overloaded engine, so the log names the engine and the budget
+            # and the setting that changes it, because the exception alone
+            # does not say which of the candidates ran out of time.
+            log.error("TTS produced no audio: %s (engine %s, %.0fs budget — "
+                      "raise backend.tts.timeout_s or VOICEBOT_TTS_TIMEOUT if "
+                      "it needs longer)",
                       exc, (self._sidecar_health() or {}).get("engine", "?"),
                       self.tts_timeout)
-            return
+            raise
         frame = int(self.sample_rate * 0.02) * 2        # 20 ms of int16
         for i in range(0, len(pcm), frame):
             yield pcm[i:i + frame]
@@ -294,7 +315,10 @@ class CUDABackend(Backend):
                 return any(tail in s for s in served)
             try:
                 with urllib.request.urlopen(base + "/health", timeout=3) as r:
-                    return 200 <= r.status < 300
+                    data = json.loads(r.read())
+                    expected = self.cfg.get("tts", {}).get("model", "").split("/")[-1]
+                    return (200 <= r.status < 300 and data.get("ready", True)
+                            and (not data.get("model") or data["model"].split("/")[-1] == expected))
             except Exception:
                 return False
 
@@ -316,9 +340,11 @@ class CUDABackend(Backend):
             asr=self.cfg.get("asr", {}).get("model", "?").split("/")[-1],
             llm=self.cfg.get("llm", {}).get("model", "?").split("/")[-1],
             tts=tts_label + " + prerender cache",
-            # The cache covers the scripted turns, so ASR is the only hard
-            # dependency for a call to start.
-            ready=asr_up,
+            # A warm script cache is not enough on its own: a customer name no
+            # warm pass could know, a dictated address read back, and any
+            # improvised line all need the live voice — and on this box a
+            # cache miss falls through to it rather than rendering.
+            ready=asr_up and tts_up,
             detail=("unreachable: " + detail) if detail else "",
         )
 
@@ -346,4 +372,5 @@ class CUDABackend(Backend):
         return info if isinstance(info, dict) else {}
 
     def close(self) -> None:
-        self._pool.shutdown(wait=False)
+        self._pool.shutdown(wait=False, cancel_futures=True)
+        self._io.shutdown(wait=False, cancel_futures=True)

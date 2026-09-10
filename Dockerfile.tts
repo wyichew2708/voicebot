@@ -28,6 +28,8 @@ COPY scripts/tts_engine_deps.sh ./scripts/
 RUN chmod +x scripts/tts_engine_deps.sh && ./scripts/tts_engine_deps.sh "${TTS_ENGINE}"
 
 COPY scripts/tts_sidecar.py ./scripts/
+COPY src/voicebot/__init__.py ./src/voicebot/
+COPY src/voicebot/runtime/__init__.py src/voicebot/runtime/base.py src/voicebot/runtime/mock.py src/voicebot/runtime/workers.py ./src/voicebot/runtime/
 VOLUME ["/app/voices"]
 
 EXPOSE 8802
