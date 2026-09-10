@@ -26,6 +26,10 @@ models:               ## pre-download MLX weights so a demo never waits
 test:
 	$(PY) -m pytest tests -q
 
+.PHONY: test-ui
+test-ui:              ## audio protocol and console socket tests (Node.js required)
+	node --test tests/realtime-audio.test.cjs
+
 eval:                 ## replay every recorded call through the engine (keyword layer)
 	$(PY) scripts/eval.py
 

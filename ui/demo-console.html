@@ -702,6 +702,7 @@ speech. Each setting is a multiple of the measured room level."></div>
   </div>
 </div>
 
+<script src="realtime-audio.js"></script>
 <script>
 (function () {
   "use strict";
@@ -911,6 +912,16 @@ speech. Each setting is a multiple of the measured room level."></div>
     $("connBadge").className = "bi-key " + (s === "on" ? "on" : "off");
   }
 
+  var audioProtocol = new VoiceAudioProtocol();
+  var mediaPlayback = null;
+  var responsePending = false;
+
+  function playbackDone() {
+    if (streamSrcs.length || pendN) return;
+    var done = audioProtocol.complete();
+    if (done) send(done);
+  }
+
   function connect() {
     if (location.protocol === "file:" || !location.host) { setConn("off", "STANDALONE"); return; }
     try { ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") +
@@ -920,19 +931,27 @@ speech. Each setting is a multiple of the measured room level."></div>
     var settled = false;
     var giveUp = setTimeout(function () { if (!settled) { settled = true; setConn("off", "OFFLINE"); } }, 2500);
     ws.onopen = function () {
-      settled = true; clearTimeout(giveUp); live = true; setConn("on", "LIVE"); refreshHealth();
+      settled = true; clearTimeout(giveUp); live = true; audioProtocol = new VoiceAudioProtocol(); setConn("on", "LIVE"); refreshHealth();
     };
     ws.onmessage = function (m) {
       if (typeof m.data !== "string") {
         if (incoming) {
-          var frame = new Int16Array(m.data);
+          var frame = audioProtocol.frame(m.data);
+          if (!frame) return;
           incoming.push(frame);
           if (streamOn) feedStream(frame);
         }
         return;
       }
       var e = JSON.parse(m.data);
+      if (!audioProtocol.accepts(e)) return;
+      if (e.kind === "audio_cancel") {
+        stopPlayback();
+        setSpeaker(null);
+        return;
+      }
       if (e.kind === "audio_begin") {
+        if (!audioProtocol.begin(e)) return;
         incoming = []; incoming.rate = e.sample_rate;
         streamOn = beginStream(e.sample_rate);
         if (streamOn) {
@@ -943,7 +962,9 @@ speech. Each setting is a multiple of the measured room level."></div>
         return;
       }
       if (e.kind === "audio_end") {
+        if (!audioProtocol.end(e)) return;
         var n = incoming ? incoming.reduce(function (a, b) { return a + b.length; }, 0) : 0;
+        var wasStreaming = streamOn;
         if (n) {
           var all = new Int16Array(n), off = 0;
           incoming.forEach(function (c) { all.set(c, off); off += c.length; });
@@ -951,18 +972,37 @@ speech. Each setting is a multiple of the measured room level."></div>
           if (streamOn) { endStream(); loadForReplay(all, incoming.rate || 16000); }
           else play(all, incoming.rate || 16000);
         }
-        streamOn = false; incoming = null; return;
+        streamOn = false; incoming = null;
+        if (wasStreaming || !n) playbackDone();
+        return;
+      }
+      if (e.kind === "response_done") {
+        responsePending = false; setWorking(false); return;
       }
       if (e.kind === "call_started") return;
       apply(e);
     };
     ws.onclose = function () {
+      audioProtocol.request(); stopPlayback();
+      if (running) stop(false);
       if (!settled) { settled = true; clearTimeout(giveUp); setConn("off", "OFFLINE"); }
       else if (live) { live = false; setConn("off", "DISCONNECTED"); }
     };
     ws.onerror = function () { if (!settled) { settled = true; clearTimeout(giveUp); setConn("off", "OFFLINE"); } };
   }
-  function send(o) { if (live && ws && ws.readyState === 1) ws.send(JSON.stringify(o)); }
+  function send(o) {
+    if (!(live && ws && ws.readyState === 1)) return;
+    if (["start", "say", "utterance_end", "barge_in", "hangup"].indexOf(o.type) >= 0) {
+      var detected = performance.now();
+      o.client_turn = audioProtocol.request();
+      responsePending = ["start", "say", "utterance_end"].indexOf(o.type) >= 0;
+      stopPlayback();
+      setSpeaker(null);
+      if (o.type === "barge_in") o.stop_ms = performance.now() - detected;
+      if (o.type === "start") o.audio_protocol = 2;
+    }
+    ws.send(JSON.stringify(o));
+  }
   function sendBin(b) { if (live && ws && ws.readyState === 1) ws.send(b); }
 
   // ------------------------------------------------------------- controls
@@ -1503,6 +1543,7 @@ speech. Each setting is a multiple of the measured room level."></div>
            voice: voice, lang: lang,
            surname: over ? over.surname : null,
            salutation: over ? over.salutation : null });
+    if (live) setWorking(true);
     $("txCount").textContent = callCount + (callCount === 1 ? " call" : " calls");
     if (!simulated) { $("talkbar").classList.add("on"); $("callerInput").focus(); }
   }
@@ -1511,6 +1552,8 @@ speech. Each setting is a multiple of the measured room level."></div>
     if (simTimer) { clearTimeout(simTimer); simTimer = null; }
     if (tick) { clearInterval(tick); tick = null; }
     running = false;
+    responsePending = false;
+    stopPlayback();
     $("btnSim").disabled = false;
     $("btnEnd").hidden = true;
     setOrb("idle");
@@ -1541,8 +1584,9 @@ speech. Each setting is a multiple of the measured room level."></div>
         return;
       }
       var text = lines[i++];
-      simTimer = setTimeout(function () {
+      simTimer = setTimeout(function offer() {
         if (!running) return;
+        if (live && responsePending) { simTimer = setTimeout(offer, 100); return; }
         send({ type: "say", text: text });
         setWorking(true);              // the scripted call waits the same way
         next();
@@ -1582,7 +1626,11 @@ speech. Each setting is a multiple of the measured room level."></div>
   function ensureAudio() {
     if (!audioEl) {
       audioEl = $("playerAudio");
-      audioEl.addEventListener("ended", function () { if (speaker === "a") setSpeaker(null); });
+      audioEl.addEventListener("ended", function () {
+        if (speaker === "a") setSpeaker(null);
+        if (mediaPlayback && mediaPlayback === audioProtocol.active) playbackDone();
+        mediaPlayback = null;
+      });
     }
     return audioEl;
   }
@@ -1598,12 +1646,18 @@ speech. Each setting is a multiple of the measured room level."></div>
     return new Blob([buf], { type: "audio/wav" });
   }
   function stopPlayback() {
+    incoming = null; streamOn = false;
+    audioProtocol.active = null;
+    mediaPlayback = null;
     stopStream();
     if (audioEl) { try { audioEl.pause(); } catch (e) {} }
   }
   function play(int16, rate) {
     var el = ensureAudio();
+    var pendingPlayback = audioProtocol.active;
     stopPlayback();
+    audioProtocol.active = pendingPlayback;
+    mediaPlayback = pendingPlayback;
     if (audioUrl) URL.revokeObjectURL(audioUrl);
     audioUrl = URL.createObjectURL(wavBlob(int16, rate));
     el.src = audioUrl;
@@ -1680,6 +1734,7 @@ speech. Each setting is a multiple of the measured room level."></div>
       var i = streamSrcs.indexOf(src);
       if (i >= 0) streamSrcs.splice(i, 1);
       if (!streamSrcs.length && speaker === "a") setSpeaker(null);
+      playbackDone();
     };
   }
 
@@ -1827,7 +1882,7 @@ speech. Each setting is a multiple of the measured room level."></div>
         var armed = armedMs;
         talking = true; voicedMs = armed; armedMs = 0;
         setOrb("hearing");
-        if (agentSpeaking) { stopPlayback(); send({ type: "barge_in" }); }
+        if (agentSpeaking || responsePending) { send({ type: "barge_in" }); }
         // Send only the run-up we actually need — enough to recover the word
         // onset, plus whatever the dwell has already swallowed. The whole ring
         // buffer would staple half a second of silence to the front of every

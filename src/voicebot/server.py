@@ -12,6 +12,8 @@ import asyncio
 import io
 import json
 import logging
+import struct
+from contextlib import aclosing
 import time
 import wave
 from pathlib import Path
@@ -28,6 +30,7 @@ from .call import router
 from .events import INTERNAL_KINDS, AgentAudio
 from .knowledge import policy as knowledge_policy
 from .pcm import trim as trim_silence
+from .realtime import RealtimeTransport
 from .recording import Recorder
 from .runtime import load_backend
 from .runtime import warm as warmup_plan
@@ -116,6 +119,11 @@ async def index() -> FileResponse:
     # runs yesterday's client against today's server, which looks like a bug in
     # the app rather than a stale file.
     return FileResponse(UI, headers={"Cache-Control": "no-store, must-revalidate"})
+
+
+@app.get("/realtime-audio.js")
+async def realtime_audio_script() -> FileResponse:
+    return FileResponse(UI.parent / "realtime-audio.js", media_type="application/javascript")
 
 
 def _prerender_cfg() -> dict:
@@ -511,174 +519,271 @@ async def list_personas() -> JSONResponse:
 @app.websocket("/ws")
 async def ws(sock: WebSocket) -> None:
     await sock.accept()
-    counted = False              # does this socket hold a live call?
+    counted = False
     session: CallSession | None = None
     record = None
     backend = _backend()
     sample_rate = _state["cfg"]["audio"]["sample_rate"]
-
-    # Mic frames accumulate here until the client's VAD says the caller stopped.
     utterance = bytearray()
-    #: Consecutive buffers the gate refused. Reset by anything it accepts.
+    overflow = False
     unheard = 0
+    audio_id = 0
+    playback: dict[tuple[int, int], asyncio.Future] = {}
+    protocol = 1
+    client_turn = 0
+    # Bound input independently of whether the client sends utterance_end.
+    max_audio = sample_rate * 2 * 30
 
-    async def emit(ev) -> None:
-        """Transcript, gate and turn events go out as JSON. Agent audio goes
-        out as binary frames, bracketed so the client knows where one
-        utterance ends and the next begins."""
-        if isinstance(ev, AgentAudio):
-            # /api/last-reply.wav wants the whole utterance, not its last
-            # piece, so a streamed line accumulates rather than replaces.
-            if ev.start:
-                _state["last_audio"] = ev.pcm
-                await sock.send_text(json.dumps(
-                    {"kind": "audio_begin", "sample_rate": ev.sample_rate}))
-            else:
-                _state["last_audio"] = (_state.get("last_audio") or b"") + ev.pcm
-            frame = int(ev.sample_rate * 0.02) * 2      # 20 ms of int16
-            for i in range(0, len(ev.pcm), frame):
-                await sock.send_bytes(ev.pcm[i:i + frame])
-            if ev.final:
-                await sock.send_text(json.dumps({"kind": "audio_end"}))
-            return
-        if ev.kind in INTERNAL_KINDS:
-            return
-        payload = ev.to_dict()
-        RECORDER.event(record, payload)
-        await sock.send_text(json.dumps(payload, ensure_ascii=False))
+    async def send(payload):
+        if isinstance(payload, bytes):
+            await sock.send_bytes(payload)
+        else:
+            await sock.send_text(json.dumps(payload, ensure_ascii=False))
+
+    transport = RealtimeTransport(send)
+
+    def clear_playback():
+        for future in playback.values():
+            future.cancel()
+        playback.clear()
+
+    async def respond(generation, current, call, *, text=None, lang=None,
+                      pcm=None, started_at=None, opening=False, request_turn=0):
+        nonlocal audio_id, unheard
+        dialogue_started = False
+        last_text = None
+        incomplete = False
+        samples = 0
+        sequence = 0
+        aid = 0
+        ack = None
+        # Freeze this job's transport mode across a subsequent call start.
+        version = protocol
+
+        async def emit(ev):
+            nonlocal audio_id, last_text, incomplete, samples, sequence, aid, ack
+            if generation != transport.generation:
+                raise asyncio.CancelledError
+            if isinstance(ev, AgentAudio):
+                if ev.start:
+                    audio_id += 1
+                    aid = audio_id
+                    samples = sequence = 0
+                    incomplete = True
+                    _state["last_audio"] = b""
+                    if version == 2:
+                        ack = asyncio.get_running_loop().create_future()
+                        playback[(generation, aid)] = ack
+                    await transport.send({"kind": "audio_begin",
+                        "sample_rate": ev.sample_rate, "generation": generation,
+                        "audio_id": aid, "audio_protocol": version,
+                        "client_turn": request_turn}, generation)
+                _state["last_audio"] += ev.pcm
+                samples += len(ev.pcm) // 2
+                if samples > ev.sample_rate * 120:
+                    raise ValueError("agent utterance exceeds 120 seconds")
+                frame = int(ev.sample_rate * 0.02) * 2
+                for i in range(0, len(ev.pcm), frame):
+                    data = ev.pcm[i:i + frame]
+                    if version == 2:
+                        data = struct.pack("<III", generation, aid, sequence) + data
+                    sequence += 1
+                    await transport.send(data, generation)
+                if ev.final:
+                    await transport.send({"kind": "audio_end",
+                        "generation": generation, "audio_id": aid,
+                        "client_turn": request_turn}, generation)
+                    if ack is not None:
+                        # Do not advance the engine past a question/final line
+                        # until the browser finishes it. Lost/blocked playback
+                        # fails closed, never confirms delivery by timeout.
+                        try:
+                            await asyncio.wait_for(ack, samples / ev.sample_rate + 15)
+                        finally:
+                            playback.pop((generation, aid), None)
+                    incomplete = False
+                    last_text = None
+                    current.speech_delivered()
+                return
+            if ev.kind in INTERNAL_KINDS:
+                return
+            payload = ev.to_dict()
+            payload.update(generation=generation, session_id=call.id,
+                           client_turn=request_turn)
+            if ev.kind == "transcript" and ev.speaker == "agent":
+                last_text = ev.text
+                incomplete = True
+            RECORDER.event(call, payload)
+            await transport.send(payload, generation)
+
+        async def drain(events):
+            # Explicit closure is essential when cancellation lands in emit,
+            # outside the generator's own await (e.g. waiting for playback).
+            async with aclosing(events):
+                async for ev in events:
+                    await emit(ev)
+
+        try:
+            if pcm is not None:
+                pcm = trim_silence(pcm, keep_ms=100, sample_rate=sample_rate)
+                seconds = len(pcm) / 2 / sample_rate
+                ok, why = is_speech(pcm, sample_rate)
+                if not ok:
+                    unheard += 1
+                    await transport.send({"kind": "status", "generation": generation,
+                        "client_turn": request_turn,
+                        "text": "Didn't catch that — go again"}, generation)
+                    if unheard >= 2:
+                        unheard = 0
+                        dialogue_started = True
+                        await drain(current.unheard())
+                    return
+                unheard = 0
+                result = await backend.transcribe(pcm, sample_rate)
+                if generation != transport.generation:
+                    raise asyncio.CancelledError
+                if not is_plausible(result.text, seconds)[0]:
+                    await transport.send({"kind": "status", "generation": generation,
+                        "client_turn": request_turn,
+                        "text": "Didn't catch that — go again"}, generation)
+                    return
+                text, lang = result.text, result.lang
+            dialogue_started = True
+            await drain(current.start() if opening else
+                        current.on_caller(text, lang, started_at=started_at))
+        finally:
+            await current.cancel_pending()
+            if generation != transport.generation and dialogue_started:
+                # Preserve accepted facts/actions; only mark unfinished speech.
+                # No rollback of a confirmed customer request or emitted tool.
+                current.interrupt(last_text if incomplete else None)
+                RECORDER.event(call, {"kind": "interrupted",
+                    "generation": generation, "turn": current.turn,
+                    "speech_complete": bool(aid) and not incomplete})
+            if generation == transport.generation:
+                await transport.send({"kind": "response_done", "generation": generation,
+                                      "client_turn": request_turn}, generation)
+            if ack is not None:
+                playback.pop((generation, aid), None)
+                if not ack.done():
+                    ack.cancel()
+
+    def launch(**kwargs):
+        current, call = session, record
+        clear_playback()
+        request_turn = client_turn
+        transport.submit(lambda g: respond(g, current, call, request_turn=request_turn,
+                                           **kwargs), lambda: None, client_turn=request_turn)
 
     try:
         while True:
-            msg = await sock.receive()
-
-            # Starlette's receive() returns the raw ASGI message rather than
-            # raising on disconnect. Without this the loop calls receive()
-            # again and RuntimeError comes out of the transport instead.
+            msg = await transport.receive(sock.receive)
             if msg.get("type") == "websocket.disconnect":
                 break
-
             if msg.get("bytes") is not None:
-                # Mic audio. Buffer it; the client tells us when to transcribe.
-                if session is not None:
-                    utterance.extend(msg["bytes"])
+                if session is not None and not overflow:
+                    data = msg["bytes"]
+                    if len(utterance) + len(data) > max_audio:
+                        utterance.clear()
+                        overflow = True
+                    else:
+                        utterance.extend(data)
                 continue
-
-            raw = msg.get("text")
-            if raw is None:
+            if msg.get("text") is None:
                 continue
-            data = json.loads(raw)
+            data = json.loads(msg["text"])
             kind = data.get("type")
-
+            if kind in ("start", "say", "barge_in", "hangup", "utterance_end"):
+                client_turn = int(data.get("client_turn", client_turn))
             if kind == "start":
-                RECORDER.finish(record)          # a previous call left hanging
+                transport.invalidate("start", client_turn)
+                clear_playback()
+                RECORDER.finish(record)
                 policy = _with_surname(personas.get(data["policy_id"]),
-                                       data.get("surname"),
-                                       data.get("salutation"))
-                register = data.get("register",
-                                    _state["cfg"].get("register", "standard"))
+                                       data.get("surname"), data.get("salutation"))
+                register = data.get("register", _state["cfg"].get("register", "standard"))
                 voice = data.get("voice") or _default_voice()
                 lang = data.get("lang") or policy.language
                 guard = _state["cfg"].get("guardrail", {})
-                session = CallSession(policy, backend, lang=lang,
-                                      register=register, voice=voice,
-                                      guardrail=guard.get("enabled", True),
-                                      guardrail_timeout_ms=guard.get(
-                                          "timeout_ms", 1500),
-                                      knowledge=knowledge_policy.default_serving())
+                session = CallSession(policy, backend, lang=lang, register=register,
+                    voice=voice, guardrail=guard.get("enabled", True),
+                    guardrail_timeout_ms=guard.get("timeout_ms", 1500),
+                    knowledge=knowledge_policy.default_serving())
+                # A caller may speak before the opening task even gets a turn.
+                # Identity must already be pending; the opening is not heard yet.
+                session.prepare_start()
+                session.interrupt()
                 record = RECORDER.start(policy_id=policy.policy_id, name=policy.name,
                                         register=register, voice=voice, lang=lang)
+                protocol = 2 if data.get("audio_protocol") == 2 else 1
                 if not counted:
                     _state["live_calls"] = _state.get("live_calls", 0) + 1
                     counted = True
                 utterance.clear()
-                await sock.send_text(json.dumps({"kind": "call_started",
-                                                 "id": record.id}))
-                async for ev in session.start():
-                    await emit(ev)
-
+                overflow = False
+                unheard = 0
+                launch(opening=True)
+                transport.notify({"kind": "call_started", "id": record.id,
+                    "generation": transport.generation, "client_turn": client_turn})
             elif kind == "utterance_end" and session is not None:
+                if overflow:
+                    overflow = False
+                    transport.notify({"kind": "status", "client_turn": client_turn,
+                        "text": "Please keep each reply under 30 seconds."})
+                    continue
                 if not utterance:
                     continue
-                # Latency is counted from the caller's last word, not their
-                # first: including the time they spent talking made a long
-                # question look like a slow answer. The client reports how
-                # much silence its endpointer waited through, and that wait is
-                # ours to own — the caller is sitting in it.
-                trailing = float(data.get("trailing_ms") or 0) / 1000.0
-                t0 = time.perf_counter() - trailing
                 pcm = bytes(utterance)
                 utterance.clear()
-                # The client brackets every turn with silence: pre-roll before
-                # the first voiced frame, and the endpointer's 700 ms of quiet
-                # after the last. Left on, that padding sank the voiced ratio
-                # far enough for the gate to throw real replies away, and long
-                # silences are also what the recogniser invents sentences over.
-                pcm = trim_silence(pcm, keep_ms=100, sample_rate=sample_rate)
-                seconds = len(pcm) / 2 / sample_rate
-
-                # Gate before the recogniser. Fed noise, Whisper-family models
-                # return fluent invented sentences rather than nothing, and
-                # everything downstream believes them.
-                ok, why = is_speech(pcm, sample_rate)
-                if not ok:
-                    log.info("dropped non-speech: %s", why)
-                    await sock.send_text(json.dumps(
-                        {"kind": "status", "text": "Didn't catch that — go again"}))
-                    unheard += 1
-                    # The status line is for the operator. The caller cannot
-                    # see it — on a phone leg it does not exist at all — so
-                    # after a second refusal in a row the bot says so out loud
-                    # rather than leaving them talking into silence.
-                    if unheard >= 2 and session is not None:
-                        unheard = 0
-                        async for ev in session.unheard():
-                            await emit(ev)
+                if len(pcm) % 2:
                     continue
-                unheard = 0
-
-                result = await backend.transcribe(pcm, sample_rate)
-
-                # And gate after it: a plausible sentence that the audio was
-                # too short to contain is a hallucination whatever it says.
-                ok, why = is_plausible(result.text, seconds)
-                if not ok:
-                    log.warning("rejected transcript (%s): %r", why, result.text[:80])
-                    await sock.send_text(json.dumps(
-                        {"kind": "status", "text": "Didn't catch that — go again"}))
-                    continue
-
-                async for ev in session.on_caller(result.text, result.lang, started_at=t0):
-                    await emit(ev)
-
+                trailing = min(5000, max(0, float(data.get("trailing_ms") or 0))) / 1000
+                launch(pcm=pcm, started_at=time.perf_counter() - trailing)
             elif kind == "say" and session is not None:
-                # Typed caller input — the deterministic path for rehearsals.
-                async for ev in session.on_caller(data["text"], data.get("lang")):
-                    await emit(ev)
-
+                utterance.clear()
+                overflow = False
+                launch(text=str(data["text"])[:4000], lang=data.get("lang"))
+            elif kind == "playback_done":
+                key = (data.get("generation"), data.get("audio_id"))
+                future = playback.get(key)
+                if future is not None and not future.done() and key[0] == transport.generation:
+                    RECORDER.event(record, {"kind": "playback_done",
+                        "generation": key[0], "audio_id": key[1]})
+                    future.set_result(None)
             elif kind == "discard_utterance":
-                # The client decided the burst was too short to be a turn.
                 utterance.clear()
-
+                overflow = False
             elif kind == "barge_in":
-                # The client stops playback itself; this is for the audit trail.
+                transport.invalidate("barge_in", client_turn)
+                clear_playback()
                 utterance.clear()
-                log.info("barge-in")
-
+                overflow = False
+                RECORDER.event(record, {"kind": "barge_in",
+                    "generation": transport.generation,
+                    "client_stop_ms": data.get("stop_ms")})
             elif kind == "hangup":
+                transport.invalidate("hangup", client_turn)
+                clear_playback()
                 RECORDER.finish(record)
                 session, record = None, None
                 utterance.clear()
-                await sock.send_text(json.dumps({"kind": "status", "text": "Call cancelled"}))
-
+                overflow = False
+                if counted:
+                    _state["live_calls"] = max(0, _state.get("live_calls", 1) - 1)
+                    counted = False
+                transport.notify({"kind": "status", "client_turn": client_turn,
+                                  "text": "Call cancelled"})
     except WebSocketDisconnect:
-        RECORDER.finish(record)      # a dropped socket is still a call that happened
-    except Exception:                                   # pragma: no cover
+        pass
+    except Exception:
         log.exception("websocket error")
+        await transport.close()
         await sock.close()
     finally:
-        # One socket holds at most one call, and the count decides whether the
-        # warm-up may use the GPU. Leaking it here would idle every warm-up
-        # for the life of the process.
+        transport.invalidate("disconnect")
+        clear_playback()
+        await transport.close()
+        RECORDER.finish(record)
         if counted:
             _state["live_calls"] = max(0, _state.get("live_calls", 1) - 1)
 

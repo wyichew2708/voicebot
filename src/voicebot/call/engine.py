@@ -458,6 +458,54 @@ class CallSession:
         # Playback rate. 1.0 until the caller asks us to slow down, then it
         # stays down for the rest of the call — as it would with a person.
         self.rate = 1.0
+        self._response_jobs: set[asyncio.Task] = set()
+        self._interrupted_question: str | None = None
+
+    def _spawn(self, awaitable):
+        task = asyncio.ensure_future(awaitable)
+        self._response_jobs.add(task)
+        def done(job):
+            self._response_jobs.discard(job)
+            # A speculative chunk can fail after its consumer was cancelled.
+            # Retrieving the exception here prevents an orphan-task warning;
+            # awaiting the task still raises it on the normal response path.
+            if not job.cancelled():
+                job.exception()
+        task.add_done_callback(done)
+        return task
+
+    async def cancel_pending(self) -> None:
+        """Release speculative routing/synthesis when a response is abandoned.
+
+        Native inference already running in a thread may finish in the backend;
+        cancellation prevents its result from re-entering this call's state.
+        """
+        jobs = list(self._response_jobs)
+        for job in jobs:
+            job.cancel()
+        await asyncio.gather(*jobs, return_exceptions=True)
+        self._response_jobs.difference_update(jobs)
+
+    def interrupt(self, unfinished_text: str | None = None) -> None:
+        """Remember the unanswered prompt, retaining confirmed facts and actions."""
+        prompts = {
+            "cross_sell": CROSS_SELL_ASK[self.lang],
+            "adviser_callback": ESCALATION[self.lang],
+            "pricing_review": price_answer(self.p, self.lang),
+            "officer": OFFICER_OFFER[self.lang],
+            "reachable": ho.reachable(self.p.phone, self.lang),
+        }
+        line = prompts.get(self._pending) or unfinished_text or self._current_line()
+        self._interrupted_question = script.question_of(line)
+
+    def prepare_start(self) -> None:
+        """Establish the identity gate before any interruptible opening work."""
+        if self.turn == 0:
+            self.turn = 1
+            self._awaiting_identity = True
+
+    def speech_delivered(self) -> None:
+        self._interrupted_question = None
 
     # ------------------------------------------------------------- helpers
 
@@ -608,7 +656,7 @@ class CallSession:
         # a single worker so they run in order either way, but submitting now
         # means chunk i+1 starts the instant i's synthesis ends, instead of
         # waiting for i to be trimmed, paced and pushed out over the socket.
-        jobs = [asyncio.ensure_future(
+        jobs = [self._spawn(
             self.backend.speak(chunk, self.lang, prerendered=True, voice=self.voice))
             for chunk in plan]
         rate: int | None = None
@@ -734,9 +782,8 @@ class CallSession:
     # --------------------------------------------------------------- start
 
     async def start(self) -> AsyncIterator[Event]:
+        self.prepare_start()
         yield Status(text=f"Connected — {self.p.name}")
-        self.turn = 1
-        self._awaiting_identity = True
         yield TurnChange(turn=1, state="active")
         # The opening line needs audio like every other turn — without this the
         # bot answers the phone in silence.
@@ -827,6 +874,15 @@ class CallSession:
         # recorded. An instruction not to call outranks whatever we asked.
         if asks_dnc(text):
             async for ev in self._do_not_call():
+                yield ev
+            return
+
+        # A bare yes while we were cut off is not evidence the caller heard
+        # the pending identity/consent/callback question. Re-ask it once.
+        # Explicit requests (including stop/human) retain their usual meaning.
+        interrupted, self._interrupted_question = self._interrupted_question, None
+        if interrupted and (bare_answer(text) is not None or wants_repeat(text)):
+            async for ev in self._generated(interrupted):
                 yield ev
             return
 
@@ -1204,10 +1260,10 @@ class CallSession:
         if is_advice:
             self.gates.set("advice", "block", note)
             yield GateChange(gate="advice", state="block", note=note)
-            async for ev in self._generated(ESCALATION[self.lang]):
-                yield ev
             self._pending = "adviser_callback"
             self._advice_raised = True
+            async for ev in self._generated(ESCALATION[self.lang]):
+                yield ev
             return
 
         # ---- off-script: factual coverage question --------------------
@@ -1567,7 +1623,7 @@ class CallSession:
         # Start the model, then talk over the wait. On a phone line one to two
         # seconds of nothing is where the caller says "hello?"; a short cached
         # line covers it, and the model is already running underneath.
-        pending = asyncio.ensure_future(
+        pending = self._spawn(
             router.route(self.backend, text, self.turn, self.lang,
                          timeout_ms=self.guardrail_timeout_ms))
         async for ev in self._generated(THINKING[self.lang]):
@@ -1695,10 +1751,10 @@ class CallSession:
             self.gates.set("advice", "block", "Advice request — routed by guardrail")
             yield GateChange(gate="advice", state="block",
                              note="Advice request — routed by guardrail")
-            async for ev in self._generated(ESCALATION[self.lang]):
-                yield ev
             self._pending = "adviser_callback"
             self._advice_raised = True
+            async for ev in self._generated(ESCALATION[self.lang]):
+                yield ev
             return
         if got.label == "email_change" and not self._awaiting_identity:
             async for ev in self._change_request(

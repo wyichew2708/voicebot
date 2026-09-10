@@ -47,6 +47,13 @@ class BackendHealth:
 
 @runtime_checkable
 class Backend(Protocol):
+    """Response methods must propagate asyncio cancellation after cleanup.
+
+    A cancelled coroutine must not write call state or emit events later.
+    Executor/native inference may finish internally; the transport fences its
+    result and the backend retains ownership of its worker until it returns.
+    Cancelling an await is not a guarantee of native GPU/HTTP request abort.
+    """
     async def transcribe(self, pcm: bytes, sample_rate: int) -> TranscriptResult: ...
 
     async def complete(self, system: str, user: str, lang: str,
