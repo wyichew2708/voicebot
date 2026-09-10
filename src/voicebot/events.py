@@ -27,6 +27,7 @@ class Transcript(Event):
     lang: str
     source: str = ""          # "pre-rendered" | "generated" | "pre-rendered + slots"
     latency_ms: int | None = None
+    response_role: str = "answer"  # answer | acknowledgement | clarification
     kind: str = field(default="transcript", init=False)
 
 

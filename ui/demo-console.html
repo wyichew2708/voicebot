@@ -645,10 +645,11 @@ speech. Each setting is a multiple of the measured room level."></div>
           <span id="whoCaller"><i style="background:var(--cust)"></i> Caller</span>
         </div>
         <div class="bignum">
-          <div class="stat"><b id="statLat">&mdash;</b><span>ms this turn</span></div>
+          <div class="stat"><b id="statLat">&mdash;</b><span title="Browser playback estimate from the last detected speech frame. Microphone answers only.">answer ms · est.</span></div>
           <div class="stat"><b id="statP50">&mdash;</b><span>p50</span></div>
-          <div class="stat"><b id="statTurns">0</b><span>turns</span></div>
+          <div class="stat"><b id="statTurns">0</b><span>samples</span></div>
         </div>
+        <div class="mono" style="text-align:center;font-size:11px">Acknowledgement: <span id="statAck">—</span> ms · est.</div>
         <!-- One big control, the way a voice app works: press to start, then
              it becomes the mic toggle for the rest of the call. -->
         <div class="dialer">
@@ -788,7 +789,7 @@ speech. Each setting is a multiple of the measured room level."></div>
     var meta = '<span class="who">' + (kind === "agent" ? "Agent" : "Caller") + '</span>' +
                '<span class="lang ' + lc + '">' + (e.lang || "") + '</span>';
     if (e.source) meta += '<span class="src">' + e.source + '</span>';
-    if (e.latency_ms) meta += '<span class="src">' + e.latency_ms + ' ms</span>';
+    if (e.latency_ms) meta += '<span class="src">' + e.latency_ms + ' ms server</span>';
     d.innerHTML = '<div class="mmeta">' + meta + '</div><div class="bub">' + e.text + '</div>';
     $("tx").appendChild(d); scrollTx();
   }
@@ -885,7 +886,7 @@ speech. Each setting is a multiple of the measured room level."></div>
       if (e.speaker === "agent") setWorking(false);
       setSpeaker(e.speaker === "agent" ? "a" : "c");
       addMsg(e.speaker, e);
-      if (e.speaker === "agent" && e.latency_ms) pushLat(e.latency_ms);
+      // Playback telemetry, not transcript generation, supplies the latency stats.
       $("cstate").textContent = e.speaker === "agent" ? "Agent speaking" : "Caller speaking";
     } else if (e.kind === "turn") {
       railState[e.turn - 1] = e.state;
@@ -915,6 +916,34 @@ speech. Each setting is a multiple of the measured room level."></div>
   var audioProtocol = new VoiceAudioProtocol();
   var mediaPlayback = null;
   var responsePending = false;
+
+  function reportPlaybackStart(at, method) {
+    var event = audioProtocol.started(at, method);
+    if (event) send(event);
+  }
+
+  function schedulePlaybackMeasurement(ctx, when) {
+    var active = audioProtocol.active;
+    if (!active || active.measurementScheduled) return;
+    active.measurementScheduled = true;
+    var at = performance.now() + Math.max(0, when - ctx.currentTime) * 1000;
+    var method = "webaudio_schedule_estimate";
+    if (typeof ctx.getOutputTimestamp === "function") {
+      var stamp;
+      try { stamp = ctx.getOutputTimestamp(); } catch (_) { /* Keep playback running. */ }
+      if (stamp && Number.isFinite(stamp.performanceTime) && stamp.performanceTime > 0 &&
+          Number.isFinite(stamp.contextTime) && stamp.contextTime > 0) {
+        at = stamp.performanceTime + (when - stamp.contextTime) * 1000;
+        method = "webaudio_output_timestamp_estimate";
+      }
+    }
+    // Do not report an audio start that was cancelled during the playout lead.
+    setTimeout(function () {
+      if (audioProtocol.active === active && ctx.state === "running") {
+        reportPlaybackStart(at, method);
+      }
+    }, Math.max(0, at - performance.now()));
+  }
 
   function playbackDone() {
     if (streamSrcs.length || pendN) return;
@@ -976,6 +1005,14 @@ speech. Each setting is a multiple of the measured room level."></div>
         if (wasStreaming || !n) playbackDone();
         return;
       }
+      if (e.kind === "playback_started") {
+        log.push(Object.assign({at: new Date().toISOString()}, e));
+        if (e.input_kind === "microphone") {
+          if (e.first_answer) pushLat(Math.round(e.client_first_audio_ms));
+          if (e.role === "acknowledgement") $("statAck").textContent = Math.round(e.client_first_audio_ms);
+        }
+        return;
+      }
       if (e.kind === "response_done") {
         responsePending = false; setWorking(false); return;
       }
@@ -994,7 +1031,13 @@ speech. Each setting is a multiple of the measured room level."></div>
     if (!(live && ws && ws.readyState === 1)) return;
     if (["start", "say", "utterance_end", "barge_in", "hangup"].indexOf(o.type) >= 0) {
       var detected = performance.now();
-      o.client_turn = audioProtocol.request();
+      var origin = o.type === "utterance_end" ? o.speech_end_ms : detected;
+      if (!(Number.isFinite(origin) && origin >= 0 && origin <= detected)) origin = null;
+      if (o.type === "utterance_end") o.endpoint_ms = origin === null ? null : detected - origin;
+      o.client_turn = audioProtocol.request(origin);
+      if (o.type === "utterance_end" || o.type === "say") {
+        $("statLat").textContent = "—"; $("statAck").textContent = "—";
+      }
       responsePending = ["start", "say", "utterance_end"].indexOf(o.type) >= 0;
       stopPlayback();
       setSpeaker(null);
@@ -1524,6 +1567,7 @@ speech. Each setting is a multiple of the measured room level."></div>
     if (!live) { addSys("Not connected to the server.", false); return; }
     railState = []; gateState = {}; lats = [];
     renderRail(); renderGates();
+    $("statAck").textContent = "—";
     $("statLat").textContent = "—"; $("statP50").textContent = "—"; $("statTurns").textContent = "0";
     running = true;
     callCount++;
@@ -1626,6 +1670,11 @@ speech. Each setting is a multiple of the measured room level."></div>
   function ensureAudio() {
     if (!audioEl) {
       audioEl = $("playerAudio");
+      audioEl.addEventListener("playing", function () {
+        if (mediaPlayback && mediaPlayback === audioProtocol.active) {
+          reportPlaybackStart(performance.now(), "media_playing_event");
+        }
+      });
       audioEl.addEventListener("ended", function () {
         if (speaker === "a") setSpeaker(null);
         if (mediaPlayback && mediaPlayback === audioProtocol.active) playbackDone();
@@ -1728,6 +1777,7 @@ speech. Each setting is a multiple of the measured room level."></div>
     // scheduling in the past, which would drop the piece entirely.
     if (playHead < now + LEAD_SEC) playHead = now + LEAD_SEC;
     try { src.start(playHead); } catch (e) { return; }
+    schedulePlaybackMeasurement(actx, playHead);
     playHead += buf.duration;
     streamSrcs.push(src);
     src.onended = function () {
@@ -1817,7 +1867,7 @@ speech. Each setting is a multiple of the measured room level."></div>
   })();
 
   var actx = null, micStream = null, micNode = null, micSrc = null;
-  var micOn = false, talking = false, lastVoice = 0, preroll = [];
+  var micOn = false, talking = false, lastVoice = 0, lastVoiceMono = null, preroll = [];
   var floor = 0.006, calibN = 0, voicedMs = 0, armedMs = 0;
 
   function downsample(buf, rate) {
@@ -1891,7 +1941,7 @@ speech. Each setting is a multiple of the measured room level."></div>
         preroll.slice(-need).forEach(sendBin); preroll = [];
       }
     }
-    if (rms > offThreshold) { lastVoice = now; if (talking) voicedMs += frameMs; }
+    if (rms > offThreshold) { lastVoice = now; lastVoiceMono = performance.now(); if (talking) voicedMs += frameMs; }
 
     var buf = pcm16(mono);
     if (talking) {
@@ -1902,7 +1952,7 @@ speech. Each setting is a multiple of the measured room level."></div>
         if (voicedMs >= MIN_VOICED_MS) {
           // The endpointer's wait is part of what the caller experiences as
           // the pause before the reply, so the server counts it.
-          send({ type: "utterance_end", trailing_ms: SILENCE_MS });
+          send({ type: "utterance_end", trailing_ms: SILENCE_MS, speech_end_ms: lastVoiceMono });
           setWorking(true);
         } else {
           // A blip, not a turn. Sending it invites the recogniser to invent

@@ -9,7 +9,10 @@ Working branch: `enhancement/realtime-voicebot`.
 
 First milestone implemented: see [interruption-handling.md](interruption-handling.md)
 for behavior, protocol migration, tests and native-inference cancellation limits.
-Hardware interruption latency is still to be measured; subsequent priorities remain planned.
+Second milestone implemented: see [latency-measurement.md](latency-measurement.md)
+for browser playback estimates, backend timings and repeatable reports.
+Hardware latency is still to be measured; priority 3 (predictable live inference)
+is next. Later priorities remain planned.
 
 Start with interruption correctness and measurement. Retain the current models for the first change so any improvement or regression can be attributed to the pipeline.
 

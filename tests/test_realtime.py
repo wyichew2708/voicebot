@@ -373,3 +373,51 @@ def test_input_queued_with_start_cannot_bypass_identity(setup):
         assert said and 'speaking with' in said[-1].lower()
         await disconnect(sock, task)
     asyncio.run(run())
+
+
+def test_playback_measurement_is_recorded_once_with_server_owned_role(setup):
+    async def run():
+        sock = Socket()
+        task = asyncio.create_task(server.ws(sock))
+        await start(sock)
+        sock.input.put_nowait({'bytes': b'\x01\0' * 1000})
+        sock.put(type='utterance_end', client_turn=2, endpoint_ms=710)
+        end = await sock.until('audio_end', client_turn=2)
+        for value in (1500, 1):
+            sock.put(type='playback_started', generation=end['generation'],
+                     audio_id=end['audio_id'], first_audio_ms=value,
+                     method='media_playing_event', role='acknowledgement')
+        played = await sock.until('playback_started', client_turn=2)
+        assert played['role'] == 'answer'
+        assert played['first_answer']
+        sock.put(type='playback_done', generation=end['generation'], audio_id=end['audio_id'])
+        await sock.until('response_done', client_turn=2)
+        call = server.RECORDER.get(server.RECORDER.summaries()[0]['id'])
+        rows = [e for e in call.events if e['kind'] == 'response_metrics' and e['client_turn'] == 2]
+        assert len(rows) == 1
+        assert rows[0]['audio'][0]['client_first_audio_ms'] == 1500
+        assert rows[0]['endpoint_ms'] == 710
+        assert rows[0]['profile'] == 'mock'
+        assert {op['stage'] for op in rows[0]['operations']} == {'asr','tts'}
+        assert rows[0]['operations'][0]['worker_queue_ms'] is None  # mock has no worker
+        await disconnect(sock, task)
+    asyncio.run(run())
+
+
+def test_interrupted_trace_is_flushed_before_hangup(setup, monkeypatch, tmp_path):
+    recorder = Recorder(tmp_path / 'calls.jsonl')
+    monkeypatch.setattr(server, 'RECORDER', recorder)
+    async def run():
+        sock = Socket()
+        setup.block = 'tts'
+        task = asyncio.create_task(server.ws(sock))
+        sock.put(type='start', policy_id='TH-4471-0093', audio_protocol=2, client_turn=1)
+        await asyncio.wait_for(setup.entered.wait(), 2)
+        sock.put(type='hangup', client_turn=2)
+        await sock.until('status', text='Call cancelled')
+        await disconnect(sock, task)
+    asyncio.run(run())
+    call = json.loads((tmp_path / 'calls.jsonl').read_text().splitlines()[0])
+    traces = [e for e in call['events'] if e['kind'] == 'response_metrics']
+    assert len(traces) == 1 and traces[0]['status'] == 'interrupted'
+    assert not traces[0]['audio']

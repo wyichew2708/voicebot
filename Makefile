@@ -36,6 +36,10 @@ eval:                 ## replay every recorded call through the engine (keyword 
 eval-live:            ## the same, with the models in the loop — reports guardrail latency
 	$(PY) scripts/eval.py --live
 
+.PHONY: latency-report
+latency-report:       ## summarize recorded browser playback and backend timings
+	$(PY) scripts/latency_report.py
+
 # ------------------------------------------------------------- knowledge base
 # The OKF bundle in knowledge/. See docs/knowledge-layer.md.
 

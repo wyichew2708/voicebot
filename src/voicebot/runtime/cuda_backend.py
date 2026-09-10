@@ -27,6 +27,7 @@ import wave
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, AsyncIterator
 
+from ..telemetry import measured_worker
 from ..lang import detect as detect_lang
 from .base import Backend, BackendHealth, Completion, Speech, TranscriptResult
 
@@ -50,7 +51,7 @@ class CUDABackend(Backend):
     # ------------------------------------------------------------- helpers
 
     async def _run(self, fn, *args):
-        return await asyncio.get_running_loop().run_in_executor(self._pool, fn, *args)
+        return await measured_worker(self._pool, fn, *args)
 
     @staticmethod
     def _post(url: str, data: bytes, content_type: str,

@@ -13,6 +13,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, AsyncIterator
 
+from ..telemetry import measured_worker
 from ..lang import detect as detect_lang
 from .base import Backend, BackendHealth, Completion, Speech, TranscriptResult
 
@@ -109,11 +110,11 @@ class MLXBackend(Backend):
             with urllib.request.urlopen(req, timeout=60) as resp:
                 return _json.loads(resp.read()).get("text", "")
 
-        return await asyncio.to_thread(_post)
+        return await measured_worker(None, _post)
 
     async def _run(self, fn, *args):
         """Run an MLX call on the dedicated worker thread."""
-        return await asyncio.get_running_loop().run_in_executor(self._pool, fn, *args)
+        return await measured_worker(self._pool, fn, *args)
 
     async def transcribe(self, pcm: bytes, sample_rate: int) -> TranscriptResult:
         # A configured sidecar wins: it is the Singlish-capable model, running
@@ -161,7 +162,7 @@ class MLXBackend(Backend):
 
     async def complete(self, system: str, user: str, lang: str,
                        max_tokens: int | None = None) -> Completion:
-        await asyncio.to_thread(self._ensure_llm)
+        await measured_worker(None, self._ensure_llm)
         if self._llm is None:
             return Completion(text="", latency_ms=0)
         from mlx_lm import generate                     # type: ignore

@@ -30,6 +30,7 @@ from .call import router
 from .events import INTERNAL_KINDS, AgentAudio
 from .knowledge import policy as knowledge_policy
 from .pcm import trim as trim_silence
+from .telemetry import MeasuredBackend, ResponseTrace, milliseconds
 from .realtime import RealtimeTransport
 from .recording import Recorder
 from .runtime import load_backend
@@ -531,6 +532,7 @@ async def ws(sock: WebSocket) -> None:
     playback: dict[tuple[int, int], asyncio.Future] = {}
     protocol = 1
     client_turn = 0
+    active_trace: ResponseTrace | None = None
     # Bound input independently of whether the client sends utterance_end.
     max_audio = sample_rate * 2 * 30
 
@@ -547,9 +549,14 @@ async def ws(sock: WebSocket) -> None:
             future.cancel()
         playback.clear()
 
-    async def respond(generation, current, call, *, text=None, lang=None,
+    async def respond(generation, current, call, trace, *, text=None, lang=None,
                       pcm=None, started_at=None, opening=False, request_turn=0):
         nonlocal audio_id, unheard
+        trace.start()
+        measured = MeasuredBackend(backend, trace)
+        current.backend = measured
+        response_role = "opening" if opening else "answer"
+        result_status = "completed"
         dialogue_started = False
         last_text = None
         incomplete = False
@@ -561,13 +568,14 @@ async def ws(sock: WebSocket) -> None:
         version = protocol
 
         async def emit(ev):
-            nonlocal audio_id, last_text, incomplete, samples, sequence, aid, ack
+            nonlocal audio_id, last_text, incomplete, samples, sequence, aid, ack, response_role
             if generation != transport.generation:
                 raise asyncio.CancelledError
             if isinstance(ev, AgentAudio):
                 if ev.start:
                     audio_id += 1
                     aid = audio_id
+                    trace.audio_ready(aid, response_role, current.lang)
                     samples = sequence = 0
                     incomplete = True
                     _state["last_audio"] = b""
@@ -577,7 +585,7 @@ async def ws(sock: WebSocket) -> None:
                     await transport.send({"kind": "audio_begin",
                         "sample_rate": ev.sample_rate, "generation": generation,
                         "audio_id": aid, "audio_protocol": version,
-                        "client_turn": request_turn}, generation)
+                        "client_turn": request_turn, "response_role": response_role}, generation)
                 _state["last_audio"] += ev.pcm
                 samples += len(ev.pcm) // 2
                 if samples > ev.sample_rate * 120:
@@ -612,7 +620,10 @@ async def ws(sock: WebSocket) -> None:
                            client_turn=request_turn)
             if ev.kind == "transcript" and ev.speaker == "agent":
                 last_text = ev.text
+                response_role = "opening" if opening else ev.response_role
                 incomplete = True
+            if ev.kind == "end":
+                trace.finish("completed")  # before the call record is flushed
             RECORDER.event(call, payload)
             await transport.send(payload, generation)
 
@@ -629,6 +640,7 @@ async def ws(sock: WebSocket) -> None:
                 seconds = len(pcm) / 2 / sample_rate
                 ok, why = is_speech(pcm, sample_rate)
                 if not ok:
+                    result_status = "input_rejected"
                     unheard += 1
                     await transport.send({"kind": "status", "generation": generation,
                         "client_turn": request_turn,
@@ -639,10 +651,11 @@ async def ws(sock: WebSocket) -> None:
                         await drain(current.unheard())
                     return
                 unheard = 0
-                result = await backend.transcribe(pcm, sample_rate)
+                result = await measured.transcribe(pcm, sample_rate)
                 if generation != transport.generation:
                     raise asyncio.CancelledError
                 if not is_plausible(result.text, seconds)[0]:
+                    result_status = "input_rejected"
                     await transport.send({"kind": "status", "generation": generation,
                         "client_turn": request_turn,
                         "text": "Didn't catch that — go again"}, generation)
@@ -651,8 +664,16 @@ async def ws(sock: WebSocket) -> None:
             dialogue_started = True
             await drain(current.start() if opening else
                         current.on_caller(text, lang, started_at=started_at))
+        except asyncio.CancelledError:
+            result_status = "interrupted"
+            raise
+        except Exception:
+            result_status = "error"
+            raise
         finally:
             await current.cancel_pending()
+            current.backend = backend
+            trace.finish(result_status)
             if generation != transport.generation and dialogue_started:
                 # Preserve accepted facts/actions; only mark unfinished speech.
                 # No rollback of a confirmed customer request or emitted tool.
@@ -668,12 +689,33 @@ async def ws(sock: WebSocket) -> None:
                 if not ack.done():
                     ack.cancel()
 
-    def launch(**kwargs):
+    def finish_trace(status):
+        if active_trace is not None:
+            active_trace.finish(status)
+
+    def launch(*, input_kind="typed", endpoint_ms=None, **kwargs):
+        nonlocal active_trace
+        finish_trace("interrupted")
         current, call = session, record
         clear_playback()
         request_turn = client_turn
-        transport.submit(lambda g: respond(g, current, call, request_turn=request_turn,
-                                           **kwargs), lambda: None, client_turn=request_turn)
+        cfg = _state["cfg"]
+        condition = cfg.get("telemetry", {}).get("benchmark_state", "unknown")
+        if condition not in ("cold", "warm", "unknown"):
+            condition = "unknown"
+        trace = ResponseTrace({
+            "session_id": call.id, "client_turn": request_turn,
+            "profile": cfg.get("profile", "unknown"), "input_kind": input_kind,
+            "declared_model_state": condition, "endpoint_ms": endpoint_ms,
+            "language": current.lang, "voice": current.voice or "default",
+            "models": {k: cfg.get("backend", {}).get(k, {}).get("model", "unknown")
+                       for k in ("asr", "llm", "tts")},
+        }, lambda payload: RECORDER.event(call, payload))
+        active_trace = trace
+        generation = transport.submit(
+            lambda g: respond(g, current, call, trace, request_turn=request_turn, **kwargs),
+            lambda: None, client_turn=request_turn)
+        trace.metadata["generation"] = generation
 
     try:
         while True:
@@ -696,6 +738,7 @@ async def ws(sock: WebSocket) -> None:
             if kind in ("start", "say", "barge_in", "hangup", "utterance_end"):
                 client_turn = int(data.get("client_turn", client_turn))
             if kind == "start":
+                finish_trace("interrupted")
                 transport.invalidate("start", client_turn)
                 clear_playback()
                 RECORDER.finish(record)
@@ -722,7 +765,7 @@ async def ws(sock: WebSocket) -> None:
                 utterance.clear()
                 overflow = False
                 unheard = 0
-                launch(opening=True)
+                launch(opening=True, input_kind="opening")
                 transport.notify({"kind": "call_started", "id": record.id,
                     "generation": transport.generation, "client_turn": client_turn})
             elif kind == "utterance_end" and session is not None:
@@ -738,11 +781,29 @@ async def ws(sock: WebSocket) -> None:
                 if len(pcm) % 2:
                     continue
                 trailing = min(5000, max(0, float(data.get("trailing_ms") or 0))) / 1000
-                launch(pcm=pcm, started_at=time.perf_counter() - trailing)
+                launch(pcm=pcm, started_at=time.perf_counter() - trailing,
+                       input_kind="microphone", endpoint_ms=milliseconds(data.get("endpoint_ms")))
             elif kind == "say" and session is not None:
                 utterance.clear()
                 overflow = False
                 launch(text=str(data["text"])[:4000], lang=data.get("lang"))
+            elif kind == "playback_started":
+                key = (data.get("generation"), data.get("audio_id"))
+                if (key in playback and key[0] == transport.generation
+                        and active_trace is not None
+                        and active_trace.metadata["generation"] == key[0]):
+                    row = active_trace.playback_started(key[1], data.get("first_audio_ms"),
+                                                        data.get("method"))
+                    if row is not None:
+                        event = {"kind": "playback_started", "generation": key[0],
+                                 "client_turn": active_trace.metadata["client_turn"],
+                                 "input_kind": active_trace.metadata["input_kind"], **row}
+                        RECORDER.event(record, event)
+                        # Only the first answer-bearing utterance feeds the UI p50.
+                        answers = [a for a in active_trace.audio.values()
+                                   if a["role"] == "answer" and a["client_first_audio_ms"] is not None]
+                        event["first_answer"] = row["role"] == "answer" and len(answers) == 1
+                        transport.notify(event)
             elif kind == "playback_done":
                 key = (data.get("generation"), data.get("audio_id"))
                 future = playback.get(key)
@@ -754,6 +815,7 @@ async def ws(sock: WebSocket) -> None:
                 utterance.clear()
                 overflow = False
             elif kind == "barge_in":
+                finish_trace("interrupted")
                 transport.invalidate("barge_in", client_turn)
                 clear_playback()
                 utterance.clear()
@@ -762,6 +824,7 @@ async def ws(sock: WebSocket) -> None:
                     "generation": transport.generation,
                     "client_stop_ms": data.get("stop_ms")})
             elif kind == "hangup":
+                finish_trace("interrupted")
                 transport.invalidate("hangup", client_turn)
                 clear_playback()
                 RECORDER.finish(record)
@@ -776,10 +839,12 @@ async def ws(sock: WebSocket) -> None:
     except WebSocketDisconnect:
         pass
     except Exception:
+        finish_trace("error")
         log.exception("websocket error")
         await transport.close()
         await sock.close()
     finally:
+        finish_trace("interrupted")
         transport.invalidate("disconnect")
         clear_playback()
         await transport.close()

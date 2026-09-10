@@ -4,15 +4,19 @@
 (function (root) {
   "use strict";
   class VoiceAudioProtocol {
-    constructor() { this.turn = 0; this.active = null; }
-    request() { this.active = null; return ++this.turn; }
+    constructor() { this.turn = 0; this.active = null; this.origin_ms = null; }
+    request(origin = null) {
+      this.active = null;
+      this.origin_ms = Number.isFinite(origin) && origin >= 0 ? origin : null;
+      return ++this.turn;
+    }
     accepts(event) {
       return event.client_turn === undefined || event.client_turn === this.turn;
     }
     begin(event) {
       if (!this.accepts(event) || event.audio_protocol !== 2) return false;
       this.active = { generation: event.generation, audio_id: event.audio_id,
-                      sequence: 0, final: false, turn: this.turn };
+                      sequence: 0, final: false, turn: this.turn, started: false };
       return true;
     }
     frame(buffer) {
@@ -31,6 +35,15 @@
           event.audio_id !== a.audio_id) return false;
       a.final = true;
       return true;
+    }
+    started(at, method) {
+      const a = this.active;
+      const elapsed = at - this.origin_ms;
+      if (!a || !a.sequence || a.started || this.origin_ms === null ||
+          !Number.isFinite(at) || elapsed < 0 || elapsed > 600000) return null;
+      a.started = true;
+      return {type: "playback_started", generation: a.generation, audio_id: a.audio_id,
+              first_audio_ms: elapsed, method: method};
     }
     complete() {
       const a = this.active;

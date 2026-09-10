@@ -113,3 +113,47 @@ test('console does not acknowledge audio still queued for playback', () => {
   c.streamSrcs.length=0; c.playbackDone();
   assert.equal(sent.at(-1).type,'playback_done');
 });
+
+test('client latency keeps the request clock across acknowledgement and answer audio', () => {
+  const p = new Protocol(); p.request(1000); p.begin(begin(1)); p.frame(frame());
+  assert.equal(p.started(1350,'media_playing_event').first_audio_ms,350);
+  assert.equal(p.started(1351,'media_playing_event'),null);
+  p.end(begin(1)); p.complete();
+  p.begin(begin(1,4,8)); p.frame(frame(4,8));
+  assert.equal(p.started(2400,'webaudio_schedule_estimate').first_audio_ms,1400);
+});
+test('missing or stale playback timing does not become zero latency', () => {
+  const p = new Protocol(); p.request(); p.begin(begin(1)); p.frame(frame());
+  assert.equal(p.started(100,'media_playing_event'),null);
+  p.request(100); p.begin(begin(2)); p.frame(frame());
+  assert.equal(p.started(99,'media_playing_event'),null);
+  assert.equal(p.started(NaN,'media_playing_event'),null);
+  p.request(200);
+  assert.equal(p.started(250,'media_playing_event'),null);
+});
+
+test('console suppresses a playback estimate cancelled during the audio lead', () => {
+  const {context:c,sent,event} = consoleHarness();
+  c.send({type:'start'});
+  event({...begin(1),kind:'audio_begin',sample_rate:16000});
+  c.ws.onmessage({data:frame()});
+  let callback;
+  c.setTimeout = fn => { callback = fn; };
+  c.schedulePlaybackMeasurement({currentTime:0,state:'running'}, 0.1);
+  c.send({type:'barge_in'});
+  callback();
+  assert.equal(sent.some(e=>e.type==='playback_started'),false);
+});
+
+test('console falls back to scheduling when device timestamp lookup throws', () => {
+  const {context:c,sent,event} = consoleHarness();
+  c.send({type:'start'});
+  event({...begin(1),kind:'audio_begin',sample_rate:16000});
+  c.ws.onmessage({data:frame()});
+  c.setTimeout = fn => fn();
+  c.schedulePlaybackMeasurement({currentTime:0,state:'running',
+    getOutputTimestamp(){throw new Error('unavailable');}}, 0.1);
+  assert.equal(sent.at(-1).type,'playback_started');
+  assert.equal(sent.at(-1).method,'webaudio_schedule_estimate');
+  assert.equal(sent.at(-1).first_audio_ms,100);
+});

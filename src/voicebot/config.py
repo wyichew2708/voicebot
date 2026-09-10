@@ -22,6 +22,7 @@ _ENV_OVERRIDES = {
     "VOICEBOT_TTS_URL": ("backend", "tts", "base_url"),
     "VOICEBOT_CACHE_DIR": ("backend", "tts", "prerender", "cache_dir"),
     "VOICEBOT_REGISTER": ("register",),
+    "VOICEBOT_BENCHMARK_STATE": ("telemetry", "benchmark_state"),
 }
 
 

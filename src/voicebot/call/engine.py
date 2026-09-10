@@ -755,7 +755,8 @@ class CallSession:
         return (self._paced(buf, rate), rate, sp.latency_ms,
                 i == 0, i == total - 1)
 
-    async def _generated(self, *parts: str | None) -> AsyncIterator[Event]:
+    async def _generated(self, *parts: str | None,
+                         response_role: str = "answer") -> AsyncIterator[Event]:
         """An unscripted line, in the same voice as every other line.
 
         Everything the agent says goes through the pre-render model, including
@@ -776,6 +777,7 @@ class CallSession:
             if first:
                 yield Transcript(speaker="agent", text=full,
                                  lang=self.lang.upper(), source="pre-rendered",
+                                 response_role=response_role,
                                  latency_ms=self._elapsed_ms(ms))
             yield AgentAudio(pcm=buf, sample_rate=sr, start=first, final=final)
 
@@ -813,7 +815,7 @@ class CallSession:
         and because two of them should already be stopping the cross-sell.
         """
         self._clarifies += 1
-        async for ev in self._generated(CLARIFY[self.lang]):
+        async for ev in self._generated(CLARIFY[self.lang], response_role="clarification"):
             yield ev
 
     # ------------------------------------------------------- caller speaks
@@ -865,7 +867,7 @@ class CallSession:
                      f" ({'asked for it' if requested else 'two turns running'})",
                 ok=True)
             # Say so, rather than silently continuing in a different language.
-            async for ev in self._generated(LANG_BRIDGE[self.lang]):
+            async for ev in self._generated(LANG_BRIDGE[self.lang], response_role="acknowledgement"):
                 yield ev
 
         # Before any question we have pending: "stop calling me" is not an
@@ -1022,7 +1024,7 @@ class CallSession:
         if is_nonverbal(text):
             if self._unanswered:
                 self._pending, self._unanswered = self._unanswered, None
-                async for ev in self._generated(CLARIFY[self.lang]):
+                async for ev in self._generated(CLARIFY[self.lang], response_role="clarification"):
                     yield ev
                 return
             line = self._outstanding_question()
@@ -1050,7 +1052,7 @@ class CallSession:
             # is already in, and only a second in a row hands over.
             self._foreign += 1
             if self._foreign < 2:
-                async for ev in self._generated(CLARIFY[self.lang]):
+                async for ev in self._generated(CLARIFY[self.lang], response_role="clarification"):
                     yield ev
                 return
             yield SystemNote(text="Tamil detected · understanding available, "
@@ -1626,7 +1628,7 @@ class CallSession:
         pending = self._spawn(
             router.route(self.backend, text, self.turn, self.lang,
                          timeout_ms=self.guardrail_timeout_ms))
-        async for ev in self._generated(THINKING[self.lang]):
+        async for ev in self._generated(THINKING[self.lang], response_role="acknowledgement"):
             yield ev
         got = await pending
         yield SystemNote(
@@ -1651,7 +1653,7 @@ class CallSession:
                 yield SystemNote(text="Recogniser output in the wrong script for this "
                                       "call, and no verdict from the model — treated "
                                       "as noise, not as a turn", ok=False)
-                async for ev in self._generated(CLARIFY[self.lang]):
+                async for ev in self._generated(CLARIFY[self.lang], response_role="clarification"):
                     yield ev
                 return
             async for ev in self._without_guardrail(text):
@@ -1667,7 +1669,7 @@ class CallSession:
             yield SystemNote(text="Recogniser output in the wrong script for this "
                                   "call, and the model made nothing of it — treated "
                                   "as noise, not as a turn", ok=False)
-            async for ev in self._generated(CLARIFY[self.lang]):
+            async for ev in self._generated(CLARIFY[self.lang], response_role="clarification"):
                 yield ev
             return
         if got.label == "unclear":
@@ -1839,7 +1841,7 @@ class CallSession:
             return
         yield SystemNote(text="Reply not understood — asking again rather than "
                               "advancing the script", ok=False)
-        async for ev in self._generated(CLARIFY[self.lang]):
+        async for ev in self._generated(CLARIFY[self.lang], response_role="clarification"):
             yield ev
 
     async def _callback_close(self) -> AsyncIterator[Event]:
