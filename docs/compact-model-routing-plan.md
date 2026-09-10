@@ -1,7 +1,8 @@
 # Priority 6: compact-model routing and prompt correction
 
 Status: first implementation slice complete: routing prompt/parser audit,
-context and evaluation harness. Live compact-model and target-hardware
+context, evaluation harness and baseline/candidate comparison checks. Live
+compact-model and target-hardware
 comparisons remain pending. See [routing evaluation](routing-evaluation.md).
 Working branch: `enhancement/realtime-voicebot`.
 

@@ -106,3 +106,53 @@ The 66-case prompt export completed successfully. HTTP behavior was verified
 with an in-process mock transport; no live model accuracy, GPU memory or voice
 latency result is claimed. The review dataset still requires human validation
 and a separate held-out set before a model selection decision.
+
+## Compare baseline and candidate reports
+
+After running each model separately using the same exported cases and prompt:
+
+```sh
+python scripts/compare_routing.py /tmp/routing-baseline.json \
+  /tmp/routing-candidate.json --output /tmp/routing-comparison.json
+```
+
+This command recomputes results from the reports' raw `predictions`; it ignores
+supplied accuracy and latency summaries. Mismatched dataset/prompt hashes,
+prompt versions, output caps or timeout budgets are rejected. Missing model,
+revision, runtime or quantization information blocks a passing result. Matching
+operator-declared cold/warm conditions and complete measured timings are
+required for the latency comparison. These declarations are not independently
+verified by the command.
+
+The provisional routing checks require:
+
+- Overall accuracy of at least 95%, with no overall or per-language regression.
+- Every critical category represented and no failed stop-call, human-handoff,
+  advice or email-change case.
+- Failure rate at most 2%, including missing/invalid/unavailable/timed-out
+  outputs, and no increase in timeout count.
+- Neither p50 nor p95 latency worse, and at least one strictly better.
+
+Use `--min-accuracy` and `--max-failure-rate` only for explicitly agreed
+experiment criteria; the output records those settings. The defaults are
+provisional, not production approval. Paired `regression_ids` and `fixed_ids`
+expose changed behavior even if aggregate accuracy is identical. Negative
+`latency_delta_ms` means the candidate was faster in the supplied measurements.
+
+Exit status 0 means these routing-only checks passed; status 1 means blocked;
+status 2 means invalid input or incomparable reports. `promotion_eligible`
+remains false: independent reviewed held-out data, deterministic action/consent
+regressions, verification of deployed weights/settings, measured total memory,
+and sustained end-to-end voice tests must still be reviewed separately.
+The current 66 cases are explicitly labelled `review`, not held-out validation.
+
+The comparator and existing evaluation harness passed 23 focused tests, covering
+fabricated summaries, mismatched conditions, missing predictions/timing,
+critical errors, invalid thresholds and CLI exit behavior. Passing fixture
+reports are tests of comparison logic, not measured model results.
+
+At this checkpoint neither the configured `127.0.0.1:8000` model service nor
+`127.0.0.1:11434` was reachable from the development workspace. Run the live
+commands on the Mac/GPU host where the service is running, then supply both JSON
+reports for comparison. No live accuracy, speedup or memory improvement has
+been established, and the default model is unchanged.
