@@ -1,6 +1,8 @@
 # Priority 6: compact-model routing and prompt correction
 
-Status: planned; implementation and target-hardware comparison are pending.
+Status: first implementation slice complete: routing prompt/parser audit,
+context and evaluation harness. Live compact-model and target-hardware
+comparisons remain pending. See [routing evaluation](routing-evaluation.md).
 Working branch: `enhancement/realtime-voicebot`.
 
 ## Goal
