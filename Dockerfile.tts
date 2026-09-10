@@ -11,6 +11,8 @@ RUN python3.11 -m pip install --no-cache-dir \
       torch torchaudio chatterbox-tts fastapi "uvicorn[standard]" numpy
 
 COPY scripts/tts_sidecar.py ./scripts/
+COPY src/voicebot/__init__.py ./src/voicebot/
+COPY src/voicebot/runtime/__init__.py src/voicebot/runtime/base.py src/voicebot/runtime/mock.py src/voicebot/runtime/workers.py ./src/voicebot/runtime/
 VOLUME ["/app/voices"]
 
 EXPOSE 8802

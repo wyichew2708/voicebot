@@ -18,6 +18,8 @@ same code the Mac uses rather than a second implementation of it.
 from __future__ import annotations
 
 import argparse
+import asyncio
+import sys
 import io
 import logging
 import time
@@ -32,6 +34,11 @@ app = FastAPI(title="voicebot TTS sidecar")
 _state: dict = {}
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "src"))
+from voicebot.runtime.workers import BoundedExecutor, InferenceBusy
+
+_worker = BoundedExecutor(1, 2, thread_name_prefix="tts-gpu")
+
 REFS = {"male": ROOT / "voices/refs/male.wav",
         "female": ROOT / "voices/refs/female.wav"}
 
@@ -88,15 +95,25 @@ def _model():
     return _state["m"]
 
 
+@app.on_event("startup")
+async def startup():
+    await asyncio.get_running_loop().run_in_executor(_worker, _model)
+
+
+@app.on_event("shutdown")
+async def shutdown():
+    _worker.shutdown(wait=False, cancel_futures=True)
+
+
 @app.get("/health")
 async def health() -> JSONResponse:
-    return JSONResponse({"ready": "m" in _state, "device": _state.get("dev", "?")})
+    return JSONResponse({"ready": "m" in _state, "device": _state.get("dev", "?"),
+                         "model": "chatterbox-multilingual-v3"},
+                        status_code=200 if "m" in _state else 503)
 
 
 @app.post("/tts")
 async def tts(request: Request) -> Response:
-    import numpy as np
-
     body = await request.json()
     text = body.get("text", "")
     voice = body.get("voice", "male")
@@ -112,11 +129,29 @@ async def tts(request: Request) -> Response:
         return Response(status_code=400, content=b"missing lang")
 
     ref = _reference(body.get("ref_audio"), voice)
-    if ref is None and body.get("ref_audio"):
+    if ref is None:
         return Response(status_code=400,
-                        content=f"reference clip not found: {body['ref_audio']}".encode())
+                        content=b"selected voice reference clip not found")
+    if "m" not in _state:
+        return Response(status_code=503, content=b"TTS is not ready")
+    if len(text) > 4000 or target_sr not in (16000, 24000, 48000):
+        return Response(status_code=400, content=b"unsupported text length or sample rate")
+    try:
+        audio = await asyncio.get_running_loop().run_in_executor(
+            _worker, _render, text, lang, ref, target_sr)
+    except InferenceBusy:
+        return Response(status_code=503, content=b"TTS capacity is full",
+                        headers={"Retry-After": "1"})
+    return Response(content=audio, media_type="audio/wav")
+
+
+def _render(text, lang, ref, target_sr):
+    import numpy as np
+
     t0 = time.time()
-    model = _model()
+    model = _state.get("m")
+    if model is None:
+        raise RuntimeError("TTS model is not loaded")
     wav = model.generate(text, language_id=lang,
                          audio_prompt_path=str(ref) if ref else None,
                          temperature=0.5)
@@ -136,7 +171,7 @@ async def tts(request: Request) -> Response:
         w.setframerate(target_sr)
         w.writeframes((np.clip(audio, -1, 1) * 32767).astype(np.int16).tobytes())
     log.info("%d ms  [%s] %r", int((time.time() - t0) * 1000), lang, text[:48])
-    return Response(content=buf.getvalue(), media_type="audio/wav")
+    return buf.getvalue()
 
 
 def main() -> None:
@@ -145,7 +180,6 @@ def main() -> None:
     ap.add_argument("--host", default="127.0.0.1")
     args = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
-    _model()                    # fail at boot, not on the first call
     import uvicorn
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
 

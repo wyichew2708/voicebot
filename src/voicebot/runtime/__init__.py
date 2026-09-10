@@ -14,6 +14,7 @@ def load_backend(cfg: dict[str, Any]) -> Backend:
     if profile == "mlx":
         from .mlx_backend import MLXBackend
         backend_cfg = dict(cfg["backend"])
+        backend_cfg["preload_llm"] = cfg.get("guardrail", {}).get("enabled", True)
         backend_cfg["sample_rate"] = cfg.get("audio", {}).get("sample_rate", 16000)
         be = MLXBackend(backend_cfg)
         be.load()

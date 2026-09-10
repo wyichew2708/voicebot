@@ -29,10 +29,10 @@ class Speech:
     pcm: bytes                 # 16-bit little-endian mono
     sample_rate: int
     latency_ms: int
-    #: Which model actually spoke. "cache" and "rendered" are the same voice;
-    #: "live" is a different speaker entirely and must never happen twice in
-    #: one call without the operator being told.
+    #: Delivery path: cache read, local render, or live synthesis. Live speech
+    #: can use the same voice; voice_consistent declares that backend contract.
     voice_source: str = "cache"
+    voice_consistent: bool = False  # live synthesis explicitly uses the cache voice
 
 
 @dataclass

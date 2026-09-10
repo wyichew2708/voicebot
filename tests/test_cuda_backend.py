@@ -130,6 +130,47 @@ def test_a_cache_miss_falls_back_to_live_tts(tmp_path, stub):
     assert [s for s in S.seen if s[0] == "/tts"], "expected a live TTS request"
 
 
+def test_failed_tts_is_not_successful_empty_audio(monkeypatch, tmp_path):
+    be = CUDABackend(_cfg('http://unused', tts={'model':'chatterbox',
+                      'prerender':{'cache_dir':str(tmp_path)}}))
+    def fail(*args):
+        raise RuntimeError('service unavailable')
+    monkeypatch.setattr(be, '_post', fail)
+    try:
+        with pytest.raises(RuntimeError, match='service unavailable'):
+            asyncio.run(be.speak('hello','en',False))
+    finally:
+        be.close()
+
+
+def test_mismatched_cached_and_live_models_are_refused(tmp_path):
+    cfg = _cfg('http://unused')
+    cfg['tts']['prerender'] = {'model':'another-speaker-model', 'cache_dir':str(tmp_path)}
+    with pytest.raises(ValueError, match='same configured model'):
+        CUDABackend(cfg)
+
+
+def test_live_voice_uses_the_cache_rate_before_pitch(monkeypatch, tmp_path):
+    from voicebot import pcm as P
+    cfg = _cfg('http://unused')
+    cfg['tts']['prerender'] = {'cache_dir':str(tmp_path),
+                               'voices':{'female':{'rate':1.1}}}
+    be = CUDABackend(cfg)
+    seen = []
+    monkeypatch.setattr(be, '_speak_one', lambda *a: b'\1\0'*100)
+    def stretch(pcm, rate, sr):
+        seen.append(('rate', rate)); return pcm
+    def pitch(pcm, voice, lang):
+        seen.append(('pitch', voice)); return pcm
+    monkeypatch.setattr(P, 'stretch', stretch)
+    monkeypatch.setattr(be.prerender, 'normalise_pitch', pitch)
+    try:
+        asyncio.run(be.speak('hello', 'en', False, 'female'))
+        assert seen == [('rate', 1.1), ('pitch', 'female')]
+    finally:
+        be.close()
+
+
 def test_health_is_not_ready_when_a_service_is_down():
     be = CUDABackend(_cfg("http://127.0.0.1:9"))     # discard port: nothing there
     h = be.health()

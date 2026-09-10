@@ -421,3 +421,32 @@ def test_interrupted_trace_is_flushed_before_hangup(setup, monkeypatch, tmp_path
     traces = [e for e in call['events'] if e['kind'] == 'response_metrics']
     assert len(traces) == 1 and traces[0]['status'] == 'interrupted'
     assert not traces[0]['audio']
+
+
+def test_overload_keeps_socket_usable_without_confirming_unheard_question(setup, monkeypatch):
+    from voicebot.runtime.workers import InferenceBusy
+    original = setup.speak
+    busy = [True]
+    async def speak(*args, **kwargs):
+        if busy[0]:
+            raise InferenceBusy('full')
+        return await original(*args, **kwargs)
+    monkeypatch.setattr(setup, 'speak', speak)
+
+    async def run():
+        sock = Socket()
+        task = asyncio.create_task(server.ws(sock))
+        sock.put(type='start', policy_id='TH-4471-0093', audio_protocol=2, client_turn=1)
+        status = await sock.until('status', client_turn=1,
+                                  text='Voice service is busy. Please try again shortly.')
+        assert 'busy' in status['text']
+        await sock.until('response_done', client_turn=1)
+        call = server.RECORDER.get(server.RECORDER.summaries()[0]['id'])
+        assert any(e.get('status') == 'overloaded' for e in call.events)
+        busy[0] = False
+        sock.put(type='say', text='yes', client_turn=2)
+        await sock.until('audio_end', client_turn=2)
+        assert not any(x.get('gate') == 'identity' and x.get('state') == 'pass'
+                       for x in sock.seen if isinstance(x, dict))
+        await disconnect(sock, task)
+    asyncio.run(run())

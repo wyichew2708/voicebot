@@ -31,6 +31,7 @@ from .events import INTERNAL_KINDS, AgentAudio
 from .knowledge import policy as knowledge_policy
 from .pcm import trim as trim_silence
 from .telemetry import MeasuredBackend, ResponseTrace, milliseconds
+from .runtime.workers import InferenceBusy
 from .realtime import RealtimeTransport
 from .recording import Recorder
 from .runtime import load_backend
@@ -120,6 +121,13 @@ async def index() -> FileResponse:
     # runs yesterday's client against today's server, which looks like a bug in
     # the app rather than a stale file.
     return FileResponse(UI, headers={"Cache-Control": "no-store, must-revalidate"})
+
+
+@app.on_event("shutdown")
+async def shutdown_backend():
+    backend = _state.get("backend")
+    if backend is not None and hasattr(backend, "close"):
+        backend.close()
 
 
 @app.get("/realtime-audio.js")
@@ -348,7 +356,8 @@ def _warm_voice(vid: str) -> None:
     if not todo:
         job.update(state="done", detail="already warm")
         return
-    for i, (text, _lang, _v), ms in warmup_plan.render(cache, todo):
+    backend = _backend()
+    for i, (text, _lang, _v) in enumerate(todo, 1):
         if job.get("state") == "cancelled":
             return                        # the endpoint wrote where it stopped
         while _on_call() and job.get("state") != "cancelled":
@@ -357,8 +366,18 @@ def _warm_voice(vid: str) -> None:
             time.sleep(1.0)
         if job.get("state") == "waiting":
             job["state"] = "running"
-        if ms is None:
-            job.update(state="failed", detail="the pre-render model is unavailable")
+        if job.get("state") == "cancelled":
+            return
+        try:
+            if hasattr(backend, "_render_resident"):
+                # Reuse the resident model on its owner; no second clone model.
+                pcm = backend._pool.submit(backend._render_resident, text, _lang, _v).result()
+            else:
+                pcm = cache.render(text, _lang, _v)
+            if not pcm:
+                raise RuntimeError("selected voice is unavailable")
+        except Exception as exc:
+            job.update(state="failed", detail=str(exc))
             return
         job.update(done=i, detail=text[:48])
     job.update(state="done", detail="")
@@ -366,10 +385,12 @@ def _warm_voice(vid: str) -> None:
 
 @app.post("/api/voices/{vid}/warm")
 async def warm_voice(vid: str) -> JSONResponse:
+    if _state["cfg"].get("profile") == "cuda":
+        return JSONResponse({"error": "Build the voice cache offline with make prerender and copy it to this server."}, status_code=409)
     if vid not in _prerender_cfg().get("voices", {}):
         return JSONResponse({"error": "no such voice"}, status_code=404)
     job = _warm_state().get(vid)
-    if job and job.get("state") == "running":
+    if job and job.get("state") in ("running", "waiting"):
         return JSONResponse({"warm": job})
     _warm_state()[vid] = {"done": 0, "total": 0, "state": "running", "detail": ""}
     asyncio.get_running_loop().run_in_executor(None, _warm_voice, vid)
@@ -379,7 +400,7 @@ async def warm_voice(vid: str) -> JSONResponse:
 @app.delete("/api/voices/{vid}/warm")
 async def stop_warming(vid: str) -> JSONResponse:
     job = _warm_state().get(vid)
-    if job and job.get("state") == "running":
+    if job and job.get("state") in ("running", "waiting"):
         # Say where it stopped here rather than in the worker: the console
         # stops polling once nothing is running, so a detail written a second
         # later is never read, and the last line rendered would stand as the
@@ -667,6 +688,11 @@ async def ws(sock: WebSocket) -> None:
         except asyncio.CancelledError:
             result_status = "interrupted"
             raise
+        except InferenceBusy:
+            result_status = "overloaded"
+            await transport.send({"kind": "status", "generation": generation,
+                "client_turn": request_turn,
+                "text": "Voice service is busy. Please try again shortly."}, generation)
         except Exception:
             result_status = "error"
             raise
@@ -674,7 +700,7 @@ async def ws(sock: WebSocket) -> None:
             await current.cancel_pending()
             current.backend = backend
             trace.finish(result_status)
-            if generation != transport.generation and dialogue_started:
+            if (generation != transport.generation or result_status == "overloaded") and dialogue_started:
                 # Preserve accepted facts/actions; only mark unfinished speech.
                 # No rollback of a confirmed customer request or emitted tool.
                 current.interrupt(last_text if incomplete else None)
@@ -703,13 +729,16 @@ async def ws(sock: WebSocket) -> None:
         condition = cfg.get("telemetry", {}).get("benchmark_state", "unknown")
         if condition not in ("cold", "warm", "unknown"):
             condition = "unknown"
+        models = {k: cfg.get("backend", {}).get(k, {}).get("model", "unknown")
+                  for k in ("asr", "llm", "tts")}
+        if getattr(backend, "_cached_voice", False):
+            models["tts"] = backend.prerender.cfg["model"]
         trace = ResponseTrace({
             "session_id": call.id, "client_turn": request_turn,
             "profile": cfg.get("profile", "unknown"), "input_kind": input_kind,
             "declared_model_state": condition, "endpoint_ms": endpoint_ms,
             "language": current.lang, "voice": current.voice or "default",
-            "models": {k: cfg.get("backend", {}).get(k, {}).get("model", "unknown")
-                       for k in ("asr", "llm", "tts")},
+            "models": models,
         }, lambda payload: RECORDER.event(call, payload))
         active_trace = trace
         generation = transport.submit(

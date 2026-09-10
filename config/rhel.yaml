@@ -4,6 +4,8 @@
 profile: cuda
 register: standard
 backend:
+  inference:
+    max_pending: 2  # beyond four concurrent HTTP workers in this process
   asr:
     # MERaLiON is the real Singlish model and belongs here rather than on the
     # Mac, where it managed 7 s an utterance. On vLLM it reports ~600 ms.

@@ -352,13 +352,22 @@ def test_the_pitch_correction_is_clamped_so_a_bad_measurement_cannot_run_away():
     assert cache.normalise_pitch(quiet, "male") == quiet
 
 
-def test_a_cache_miss_on_a_live_call_renders_once():
+def test_a_cache_miss_on_a_live_call_renders_once(tmp_path, monkeypatch):
     """The retry budget is for the build. On a call the caller is sitting in
     the silence: four draws turned a 2.6 s miss into 10.6 s."""
-    src = (pathlib.Path(__file__).resolve().parents[1]
-           / "src/voicebot/runtime/mlx_backend.py").read_text()
-    assert "self.prerender.render, text, lang, voice, 1" in src, \
-        "a live cache miss uses the build-time retry budget again"
+    from voicebot.runtime.mlx_backend import MLXBackend
+    be = MLXBackend({'tts':{'prerender':{'model':'resident', 'cache_dir':str(tmp_path)}}})
+    be._tts = be.prerender._model = object()
+    attempts = []
+    def render(text, lang, voice, budget):
+        attempts.append(budget)
+        return b'\1\0' * 100
+    monkeypatch.setattr(be.prerender, 'render', render)
+    try:
+        asyncio.run(be.speak('a new name', 'en', True))
+        assert attempts == [1], 'a live cache miss must not use the build-time retry budget'
+    finally:
+        be.close()
 
 
 def test_a_voice_at_its_natural_speed_keeps_the_keys_it_already_had():

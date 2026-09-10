@@ -586,7 +586,7 @@ class CallSession:
         it does the operator is told rather than left to hear it.
         """
         src = getattr(sp, "voice_source", "cache")
-        if src == "live":
+        if src == "live" and not getattr(sp, "voice_consistent", False):
             self._fell_back = True
 
     def _paced(self, buf: bytes, sample_rate: int) -> bytes:

@@ -1,9 +1,10 @@
 # Apple Silicon / MLX profile.
 profile: mlx
 backend:
+  inference:
+    max_pending: 2
   llm:
-    # Loaded lazily on first free-form generation. Nothing in the current
-    # script calls it, so the demo runs without this 20 GB download.
+    # Loaded before calls when guardrail.enabled is true (the default).
     model: mlx-community/Qwen3.6-35B-A3B-4bit
     max_tokens: 220
     temperature: 0.3
