@@ -645,6 +645,22 @@ class CallSession:
         back to look at the next one.
         """
         said = [self._accommodate(x) for x in parts if x]
+        if getattr(self.backend, "streaming_tts", False) and self.rate == 1.0 and said:
+            started = time.perf_counter()
+            first = True
+            stream = self.backend.stream_speak(self._utterance_text(said), self.lang,
+                                                voice=self.voice)
+            try:
+                async for chunk in stream:
+                    if chunk.final and first and not chunk.pcm:
+                        raise RuntimeError("TTS stream produced no audio")
+                    yield (chunk.pcm, chunk.sample_rate,
+                           int((time.perf_counter() - started) * 1000) if first else 0,
+                           first, chunk.final)
+                    first = False
+            finally:
+                await stream.aclose()
+            return
         # Chunk only when synthesis has been measured fast enough to sustain
         # it. Above 1x the arithmetic is against us: total synthesis exceeds
         # total audio, so playback catches up and the line gaps in the middle,
@@ -652,24 +668,23 @@ class CallSession:
         plan = self._stream_plan(said)
         if not plan:
             return
-        # Queued up front rather than one at a time. The backend synthesises on
-        # a single worker so they run in order either way, but submitting now
-        # means chunk i+1 starts the instant i's synthesis ends, instead of
-        # waiting for i to be trimmed, paced and pushed out over the socket.
-        jobs = [self._spawn(
-            self.backend.speak(chunk, self.lang, prerendered=True, voice=self.voice))
-            for chunk in plan]
+        # Keep one chunk ahead; submitting an entire response can exceed the
+        # backend's bounded queue and waste synthesis after an interruption.
+        def submit(i):
+            return self._spawn(self.backend.speak(plan[i], self.lang,
+                               prerendered=True, voice=self.voice))
+        jobs = {i: submit(i) for i in range(min(2, len(plan)))}
         rate: int | None = None
         try:
-            for i, job in enumerate(jobs):
-                sp = await job
+            for i in range(len(plan)):
+                sp = await jobs.pop(i)
+                if i + 2 < len(plan):
+                    jobs[i + 2] = submit(i + 2)
                 if rate is None:
                     rate = sp.sample_rate
                 yield self._chunk_out(sp, i, len(plan), rate)
         finally:
-            # Barge-in abandons this generator mid-line; nothing should keep
-            # synthesising a sentence the caller has already talked over.
-            for job in jobs:
+            for job in jobs.values():
                 if not job.done():
                     job.cancel()
 
@@ -1416,16 +1431,24 @@ class CallSession:
         # eight. The acknowledgement gives way to the body: one lead slot,
         # and the body is the part that has to be there.
         split = script.split_on_email(text) if nxt == 4 else None
-        if split is not None:
-            head, tail = split
-            full, buf, sr, ms = await self._voice(lead, head, tail)
+        parts = (lead, *split) if split is not None else (lead, text)
+        if getattr(self.backend, "streaming_tts", False) and self.rate == 1.0:
+            full = self._utterance_text([self._accommodate(x) for x in parts if x])
+            async for buf, sr, ms, first, final in self._voice_stream(*parts):
+                if first:
+                    yield Transcript(speaker="agent", text=full, lang=self.lang.upper(),
+                                     source=script.source_label(nxt), latency_ms=self._elapsed_ms(ms))
+                yield AgentAudio(pcm=buf, sample_rate=sr, start=first, final=final)
         else:
-            full, buf, sr, ms = await self._voice(lead, text)
-        yield Transcript(speaker="agent", text=full, lang=self.lang.upper(),
-                         source=script.source_label(nxt),
-                         latency_ms=self._elapsed_ms(ms))
-        yield AgentAudio(pcm=buf, sample_rate=sr)
-
+            if split is not None:
+                head, tail = split
+                full, buf, sr, ms = await self._voice(lead, head, tail)
+            else:
+                full, buf, sr, ms = await self._voice(lead, text)
+            yield Transcript(speaker="agent", text=full, lang=self.lang.upper(),
+                             source=script.source_label(nxt),
+                             latency_ms=self._elapsed_ms(ms))
+            yield AgentAudio(pcm=buf, sample_rate=sr)
         if nxt == 6:
             async for ev in self._advance(from_turn=6):
                 yield ev

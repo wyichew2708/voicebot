@@ -450,3 +450,55 @@ def test_overload_keeps_socket_usable_without_confirming_unheard_question(setup,
                        for x in sock.seen if isinstance(x, dict))
         await disconnect(sock, task)
     asyncio.run(run())
+
+
+def test_flow_control_limits_sent_audio_and_barge_in_unblocks_it(setup, monkeypatch):
+    async def speak(*args, **kwargs):
+        return Speech(b'\1\0'*16000*5,16000,0)
+    monkeypatch.setattr(setup,'speak',speak)
+    async def run():
+        sock=Socket()
+        task=asyncio.create_task(server.ws(sock))
+        sock.put(type='start',policy_id='TH-4471-0093',audio_protocol=2,client_turn=1,audio_flow=True)
+        begin=await sock.until('audio_begin',client_turn=1)
+        assert begin['flow_control']
+        async def fill_window():
+            while sum((len(x)-12)//2 for x in sock.seen if isinstance(x,bytes)) < 32000:
+                await asyncio.sleep(0)
+        await asyncio.wait_for(fill_window(),1)
+        await asyncio.sleep(.02)
+        assert sum((len(x)-12)//2 for x in sock.seen if isinstance(x,bytes))==32000
+        assert not any(isinstance(x,dict) and x.get('kind')=='audio_end' for x in sock.seen)
+        sock.put(type='barge_in',client_turn=2)
+        await sock.until('audio_cancel',client_turn=2)
+        await disconnect(sock,task)
+    asyncio.run(run())
+
+
+def test_flow_control_finishes_after_all_samples_and_final_ack(setup, monkeypatch):
+    async def speak(*args, **kwargs):
+        return Speech(b'\1\0'*16000*3,16000,0)
+    monkeypatch.setattr(setup,'speak',speak)
+    async def run():
+        sock=Socket()
+        task=asyncio.create_task(server.ws(sock))
+        sock.put(type='start',policy_id='TH-4471-0093',audio_protocol=2,client_turn=1,audio_flow=True)
+        begin=await sock.until('audio_begin',client_turn=1)
+        key={'generation':begin['generation'],'audio_id':begin['audio_id']}
+        sock.put(type='playback_done',**key)  # premature completion is ignored
+        samples=0
+        while True:
+            item=await asyncio.wait_for(sock.output.get(),2)
+            if isinstance(item,bytes):
+                samples+=(len(item)-12)//2
+                sock.put(type='audio_consumed',samples=samples,**key)
+            elif item.get('kind')=='audio_end':
+                break
+            else:
+                assert item.get('kind')!='response_done'
+        assert samples==48000
+        assert not any(isinstance(x,dict) and x.get('kind')=='response_done' for x in sock.seen)
+        sock.put(type='playback_done',underrun_ms=0,**key)
+        await sock.until('response_done',client_turn=1)
+        await disconnect(sock,task)
+    asyncio.run(run())

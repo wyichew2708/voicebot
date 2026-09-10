@@ -36,6 +36,14 @@ class Speech:
 
 
 @dataclass
+class SpeechChunk:
+    pcm: bytes
+    sample_rate: int
+    final: bool = False
+    voice_source: str = "live"
+
+
+@dataclass
 class BackendHealth:
     profile: str
     asr: str
@@ -54,6 +62,14 @@ class Backend(Protocol):
     result and the backend retains ownership of its worker until it returns.
     Cancelling an await is not a guarantee of native GPU/HTTP request abort.
     """
+    streaming_tts: bool = False
+
+    async def stream_speak(self, text: str, lang: str, voice: str | None = None):
+        """Buffered fallback. Only streaming_tts=True promises early segments."""
+        speech = await self.speak(text, lang, prerendered=True, voice=voice)
+        yield SpeechChunk(speech.pcm, speech.sample_rate, final=True,
+                          voice_source=speech.voice_source)
+
     async def transcribe(self, pcm: bytes, sample_rate: int) -> TranscriptResult: ...
 
     async def complete(self, system: str, user: str, lang: str,

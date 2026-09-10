@@ -914,6 +914,7 @@ speech. Each setting is a multiple of the measured room level."></div>
   }
 
   var audioProtocol = new VoiceAudioProtocol();
+  var workletPlayback = null, workletActive = null, workletLoading = null;
   var mediaPlayback = null;
   var responsePending = false;
 
@@ -946,7 +947,7 @@ speech. Each setting is a multiple of the measured room level."></div>
   }
 
   function playbackDone() {
-    if (streamSrcs.length || pendN) return;
+    if (workletActive || streamSrcs.length || pendN) return;
     var done = audioProtocol.complete();
     if (done) send(done);
   }
@@ -982,7 +983,12 @@ speech. Each setting is a multiple of the measured room level."></div>
       if (e.kind === "audio_begin") {
         if (!audioProtocol.begin(e)) return;
         incoming = []; incoming.rate = e.sample_rate;
-        streamOn = beginStream(e.sample_rate);
+        streamOn = beginStream(e.sample_rate, e.flow_control);
+        if (e.flow_control && !streamOn) {
+          send({type:"playback_error", generation:e.generation, audio_id:e.audio_id});
+          addSys("Audio output could not start. Enable audio and restart the call.", false);
+          return;
+        }
         if (streamOn) {
           $("player").classList.add("on");
           $("player").classList.remove("blocked");
@@ -1031,6 +1037,9 @@ speech. Each setting is a multiple of the measured room level."></div>
     if (!(live && ws && ws.readyState === 1)) return;
     if (["start", "say", "utterance_end", "barge_in", "hangup"].indexOf(o.type) >= 0) {
       var detected = performance.now();
+      if (["start", "say", "utterance_end"].indexOf(o.type) >= 0) {
+        o.audio_flow = !!(workletPlayback && actx && actx.state === "running");
+      }
       var origin = o.type === "utterance_end" ? o.speech_end_ms : detected;
       if (!(Number.isFinite(origin) && origin >= 0 && origin <= detected)) origin = null;
       if (o.type === "utterance_end") o.endpoint_ms = origin === null ? null : detected - origin;
@@ -1046,7 +1055,15 @@ speech. Each setting is a multiple of the measured room level."></div>
     }
     ws.send(JSON.stringify(o));
   }
-  function sendBin(b) { if (live && ws && ws.readyState === 1) ws.send(b); }
+  function sendBin(b) {
+    if (!(live && ws && ws.readyState === 1 && micOn)) return false;
+    if (ws.bufferedAmount > 131072) {
+      micStop(); send({type:"discard_utterance"});
+      addSys("Microphone upload fell behind. Unmute to try again.", false);
+      return false;
+    }
+    ws.send(b); return true;
+  }
 
   // ------------------------------------------------------------- controls
 
@@ -1563,14 +1580,16 @@ speech. Each setting is a multiple of the measured room level."></div>
     return String(Math.floor(s / 60)).padStart(2, "0") + ":" + String(s % 60).padStart(2, "0");
   }
 
-  function beginCall(simulated) {
+  async function beginCall(simulated) {
     if (!live) { addSys("Not connected to the server.", false); return; }
     railState = []; gateState = {}; lats = [];
     renderRail(); renderGates();
     $("statAck").textContent = "—";
     $("statLat").textContent = "—"; $("statP50").textContent = "—"; $("statTurns").textContent = "0";
     running = true;
+    responsePending = true;
     callCount++;
+    var startingCall = callCount;
     var p = personas[sel] || {};
     addSeparator("Call " + callCount + " · " + (p.name || "?") + " · " +
                  lang.toUpperCase() + " · " + (voice || "") + " · " + register +
@@ -1582,6 +1601,12 @@ speech. Each setting is a multiple of the measured room level."></div>
     $("cstate").textContent = "Connected";
     t0 = Date.now();
     tick = setInterval(function () { $("ctimer").textContent = fmt(Date.now() - t0); }, 500);
+    var ctx = ensureCtx();
+    if (ctx) {
+      try { await ctx.resume(); } catch (e) {}
+      await ensureWorklet(ctx);
+    }
+    if (!running || startingCall !== callCount) return;
     var over = nameOverride();
     send({ type: "start", policy_id: p.policy_id, register: register,
            voice: voice, lang: lang,
@@ -1606,7 +1631,7 @@ speech. Each setting is a multiple of the measured room level."></div>
     $("cstate").textContent = finished ? "Call ended" : "Idle";
     $("talkbar").classList.remove("on");
     setSpeaker(null);
-    if (micOn) micStop();
+    micStop(); // also invalidates a permission/worklet setup still in flight
   }
 
   // ------------------------------------------------- simulated call driver
@@ -1745,7 +1770,45 @@ speech. Each setting is a multiple of the measured room level."></div>
     return actx;
   }
 
-  function beginStream(rate) {
+  async function ensureWorklet(ctx) {
+    if (!ctx || !ctx.audioWorklet || typeof AudioWorkletNode === "undefined") return false;
+    if (workletPlayback && workletPlayback.context === ctx) return true;
+    if (workletLoading) return workletLoading;
+    workletLoading = (async function () {
+      try {
+        await ctx.audioWorklet.addModule("/voice-worklet.js");
+        var node = new AudioWorkletNode(ctx, "voice-playback", {numberOfInputs:0,
+          numberOfOutputs:1, outputChannelCount:[1]});
+        node.connect(ctx.destination);
+        node.port.onmessage = function (event) {
+          if (workletPlayback !== node) return;
+          var m = event.data, a = workletActive;
+          if (!a || audioProtocol.active !== a || m.id !== a.generation + ":" + a.audio_id) return;
+          if (m.type === "started") schedulePlaybackMeasurement(ctx, m.context_time);
+          if (m.type === "consumed") send({type:"audio_consumed", generation:a.generation,
+            audio_id:a.audio_id, samples:m.samples});
+          if (m.type === "done") {
+            a.underrun_ms = m.underrun_ms;
+            workletActive = null; setSpeaker(null); playbackDone();
+          }
+          if (m.type === "playback_error") failWorklet(m.reason);
+        };
+        node.onprocessorerror = function () { failWorklet("Audio processor stopped"); };
+        workletPlayback = node;
+        return true;
+      } catch (e) { return false; }
+      finally { workletLoading = null; }
+    })();
+    return workletLoading;
+  }
+  function failWorklet(reason) {
+    var a = workletActive;
+    stopPlayback();
+    if (a) send({type:"playback_error", generation:a.generation, audio_id:a.audio_id});
+    addSys(reason + ". Restart the call to restore audio.", false);
+  }
+
+  function beginStream(rate, flowControl) {
     var ctx = ensureCtx();
     if (!ctx) return false;
     if (ctx.state === "suspended") { try { ctx.resume(); } catch (e) {} }
@@ -1754,10 +1817,23 @@ speech. Each setting is a multiple of the measured room level."></div>
     stopStream();
     pend = []; pendN = 0; pendRate = rate || 16000;
     playHead = 0;
+    if (flowControl) {
+      if (!workletPlayback) return false;
+      var a = audioProtocol.active;
+      workletActive = a;
+      workletPlayback.port.postMessage({type:"begin", id:a.generation + ":" + a.audio_id, rate:pendRate});
+    }
     return true;
   }
 
   function feedStream(frame) {
+    if (workletActive) {
+      // Replay retains the incoming packet; transfer only a bounded copy.
+      var copy = frame.slice();
+      workletPlayback.port.postMessage({type:"pcm",
+        id:workletActive.generation + ":" + workletActive.audio_id, pcm:copy}, [copy.buffer]);
+      return;
+    }
     pend.push(frame); pendN += frame.length;
     if (pendN / pendRate >= FLUSH_SEC) flushStream();
   }
@@ -1788,9 +1864,16 @@ speech. Each setting is a multiple of the measured room level."></div>
     };
   }
 
-  function endStream() { flushStream(); }
+  function endStream() {
+    if (workletActive) {
+      workletPlayback.port.postMessage({type:"end",
+        id:workletActive.generation + ":" + workletActive.audio_id});
+    } else flushStream();
+  }
 
   function stopStream() {
+    if (workletPlayback) workletPlayback.port.postMessage({type:"stop"});
+    workletActive = null;
     streamSrcs.forEach(function (s) { try { s.onended = null; s.stop(); } catch (e) {} });
     streamSrcs = []; pend = []; pendN = 0; playHead = 0;
   }
@@ -1867,7 +1950,7 @@ speech. Each setting is a multiple of the measured room level."></div>
   })();
 
   var actx = null, micStream = null, micNode = null, micSrc = null;
-  var micOn = false, talking = false, lastVoice = 0, lastVoiceMono = null, preroll = [];
+  var micOn = false, micEpoch = 0, talking = false, lastVoice = 0, lastVoiceMono = null, preroll = [];
   var floor = 0.006, calibN = 0, voicedMs = 0, armedMs = 0;
 
   function downsample(buf, rate) {
@@ -1888,7 +1971,7 @@ speech. Each setting is a multiple of the measured room level."></div>
     }
     return o.buffer;
   }
-  function onFrame(f32, rate) {
+  function onFrame(f32, rate, capturedAt) {
     var mono = downsample(f32, rate), sum = 0;
     for (var i = 0; i < mono.length; i++) sum += mono[i] * mono[i];
     var rms = Math.sqrt(sum / mono.length), now = Date.now();
@@ -1941,11 +2024,11 @@ speech. Each setting is a multiple of the measured room level."></div>
         preroll.slice(-need).forEach(sendBin); preroll = [];
       }
     }
-    if (rms > offThreshold) { lastVoice = now; lastVoiceMono = performance.now(); if (talking) voicedMs += frameMs; }
+    if (rms > offThreshold) { lastVoice = now; lastVoiceMono = Number.isFinite(capturedAt) ? capturedAt : performance.now(); if (talking) voicedMs += frameMs; }
 
     var buf = pcm16(mono);
     if (talking) {
-      sendBin(buf);
+      if (!sendBin(buf)) return;
       if (now - lastVoice > SILENCE_MS) {
         talking = false;
         setOrb(micOn ? "on" : "muted");
@@ -1964,29 +2047,58 @@ speech. Each setting is a multiple of the measured room level."></div>
     } else { preroll.push(buf); if (preroll.length > PREROLL) preroll.shift(); }
   }
   async function micStart() {
+    var epoch = ++micEpoch;
     if (!live) { addSys("Microphone needs the local server.", false);
                  setOrb(running ? "muted" : "idle"); return; }
     try {
-      micStream = await navigator.mediaDevices.getUserMedia({
+      var acquiredStream = await navigator.mediaDevices.getUserMedia({
         audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true,
                  autoGainControl: true } });
     } catch (e) { addSys("Microphone permission denied — typing still works.", false);
                   setOrb(running ? "muted" : "idle"); return; }
-    actx = new (window.AudioContext || window.webkitAudioContext)();
-    micSrc = actx.createMediaStreamSource(micStream);
-    var rate = actx.sampleRate;
-    micNode = actx.createScriptProcessor(1024, 1, 1);
-    micNode.onaudioprocess = function (e) { if (micOn) onFrame(e.inputBuffer.getChannelData(0), rate); };
-    micSrc.connect(micNode); micNode.connect(actx.destination);
+    if (epoch !== micEpoch) { acquiredStream.getTracks().forEach(t => t.stop()); return; }
+    micStream = acquiredStream;
+    try {
+    var ctx = ensureCtx();
+    try { await ctx.resume(); } catch (e) {}
+    var available = await ensureWorklet(ctx);
+    if (epoch !== micEpoch) return;
+    micSrc = ctx.createMediaStreamSource(micStream);
+    var rate = ctx.sampleRate;
+    if (available) {
+      var node = new AudioWorkletNode(ctx, "voice-capture", {numberOfInputs:1,
+        numberOfOutputs:1, outputChannelCount:[1]});
+      micNode = node;
+      node.port.onmessage = function (event) {
+        if (micNode !== node || epoch !== micEpoch) return;
+        var m = event.data;
+        if (m.type === "capture_error") { micStop(); send({type:"discard_utterance"}); addSys(m.reason, false); return; }
+        if (m.type === "capture") {
+          if (micOn) onFrame(m.pcm, SR, performance.now() - Math.max(0, ctx.currentTime - m.context_time) * 1000);
+          node.port.postMessage({type:"ack"});
+        }
+      };
+      node.onprocessorerror = function () { micStop(); send({type:"discard_utterance"}); addSys("Microphone processor stopped.", false); };
+    } else {
+      micNode = ctx.createScriptProcessor(1024, 1, 1);
+      micNode.onaudioprocess = function (e) { if (micOn) onFrame(e.inputBuffer.getChannelData(0), rate); };
+      addSys("Using compatibility microphone capture.", true);
+    }
+    micSrc.connect(micNode); micNode.connect(ctx.destination);
     micOn = true;
     setOrb("on");
+    } catch (e) {
+      micStop();
+      addSys("Microphone audio could not start — typing still works.", false);
+    }
   }
   function micStop() {
+    micEpoch++;
     micOn = false; talking = false; preroll = []; armedMs = 0;
-    if (micNode) { micNode.disconnect(); micNode.onaudioprocess = null; micNode = null; }
+    if (micNode) { if (micNode.port) micNode.port.postMessage({type:"stop"}); micNode.disconnect(); micNode.onaudioprocess = null; micNode = null; }
     if (micSrc) { micSrc.disconnect(); micSrc = null; }
     if (micStream) { micStream.getTracks().forEach(function (t) { t.stop(); }); micStream = null; }
-    if (actx) { actx.close(); actx = null; }
+    // Keep the shared output context alive when the microphone is muted.
     setOrb(running ? "muted" : "idle");
   }
   // ---------------------------------------------------------------- orb

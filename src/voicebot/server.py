@@ -32,6 +32,7 @@ from .knowledge import policy as knowledge_policy
 from .pcm import trim as trim_silence
 from .telemetry import MeasuredBackend, ResponseTrace, milliseconds
 from .runtime.workers import InferenceBusy
+from .playout import PlayoutWindow
 from .realtime import RealtimeTransport
 from .recording import Recorder
 from .runtime import load_backend
@@ -88,7 +89,7 @@ async def warmup() -> None:
         try:
             t0 = time.perf_counter()
             async for _ in backend.synthesize("Ready.", lang):
-                break
+                pass
             log.info("warmed %s in %d ms", lang, int((time.perf_counter() - t0) * 1000))
         except Exception as exc:                        # pragma: no cover
             log.warning("warmup failed for %s: %s", lang, exc)
@@ -133,6 +134,12 @@ async def shutdown_backend():
 @app.get("/realtime-audio.js")
 async def realtime_audio_script() -> FileResponse:
     return FileResponse(UI.parent / "realtime-audio.js", media_type="application/javascript")
+
+
+@app.get("/voice-worklet.js")
+async def voice_worklet_script() -> FileResponse:
+    return FileResponse(UI.parent / "voice-worklet.js", media_type="application/javascript",
+                        headers={"Cache-Control": "no-store"})
 
 
 def _prerender_cfg() -> dict:
@@ -551,6 +558,7 @@ async def ws(sock: WebSocket) -> None:
     unheard = 0
     audio_id = 0
     playback: dict[tuple[int, int], asyncio.Future] = {}
+    windows: dict[tuple[int, int], PlayoutWindow] = {}
     protocol = 1
     client_turn = 0
     active_trace: ResponseTrace | None = None
@@ -569,9 +577,10 @@ async def ws(sock: WebSocket) -> None:
         for future in playback.values():
             future.cancel()
         playback.clear()
+        windows.clear()
 
     async def respond(generation, current, call, trace, *, text=None, lang=None,
-                      pcm=None, started_at=None, opening=False, request_turn=0):
+                      pcm=None, started_at=None, opening=False, request_turn=0, flow_control=False):
         nonlocal audio_id, unheard
         trace.start()
         measured = MeasuredBackend(backend, trace)
@@ -587,6 +596,7 @@ async def ws(sock: WebSocket) -> None:
         ack = None
         # Freeze this job's transport mode across a subsequent call start.
         version = protocol
+        flow_control = flow_control and version == 2
 
         async def emit(ev):
             nonlocal audio_id, last_text, incomplete, samples, sequence, aid, ack, response_role
@@ -599,14 +609,17 @@ async def ws(sock: WebSocket) -> None:
                     trace.audio_ready(aid, response_role, current.lang)
                     samples = sequence = 0
                     incomplete = True
-                    _state["last_audio"] = b""
+                    _state["last_audio"] = bytearray()
                     if version == 2:
                         ack = asyncio.get_running_loop().create_future()
                         playback[(generation, aid)] = ack
+                        if flow_control:
+                            windows[(generation, aid)] = PlayoutWindow(ev.sample_rate)
                     await transport.send({"kind": "audio_begin",
                         "sample_rate": ev.sample_rate, "generation": generation,
                         "audio_id": aid, "audio_protocol": version,
-                        "client_turn": request_turn, "response_role": response_role}, generation)
+                        "client_turn": request_turn, "response_role": response_role,
+                        "flow_control": flow_control}, generation)
                 _state["last_audio"] += ev.pcm
                 samples += len(ev.pcm) // 2
                 if samples > ev.sample_rate * 120:
@@ -614,11 +627,17 @@ async def ws(sock: WebSocket) -> None:
                 frame = int(ev.sample_rate * 0.02) * 2
                 for i in range(0, len(ev.pcm), frame):
                     data = ev.pcm[i:i + frame]
+                    window = windows.get((generation, aid))
+                    if window is not None:
+                        await window.reserve(len(data) // 2)
                     if version == 2:
                         data = struct.pack("<III", generation, aid, sequence) + data
                     sequence += 1
                     await transport.send(data, generation)
                 if ev.final:
+                    window = windows.get((generation, aid))
+                    if window is not None:
+                        window.final = True
                     await transport.send({"kind": "audio_end",
                         "generation": generation, "audio_id": aid,
                         "client_turn": request_turn}, generation)
@@ -630,6 +649,7 @@ async def ws(sock: WebSocket) -> None:
                             await asyncio.wait_for(ack, samples / ev.sample_rate + 15)
                         finally:
                             playback.pop((generation, aid), None)
+                            windows.pop((generation, aid), None)
                     incomplete = False
                     last_text = None
                     current.speech_delivered()
@@ -794,7 +814,7 @@ async def ws(sock: WebSocket) -> None:
                 utterance.clear()
                 overflow = False
                 unheard = 0
-                launch(opening=True, input_kind="opening")
+                launch(opening=True, input_kind="opening", flow_control=data.get("audio_flow") is True)
                 transport.notify({"kind": "call_started", "id": record.id,
                     "generation": transport.generation, "client_turn": client_turn})
             elif kind == "utterance_end" and session is not None:
@@ -811,11 +831,21 @@ async def ws(sock: WebSocket) -> None:
                     continue
                 trailing = min(5000, max(0, float(data.get("trailing_ms") or 0))) / 1000
                 launch(pcm=pcm, started_at=time.perf_counter() - trailing,
+                       flow_control=data.get("audio_flow") is True,
                        input_kind="microphone", endpoint_ms=milliseconds(data.get("endpoint_ms")))
             elif kind == "say" and session is not None:
                 utterance.clear()
                 overflow = False
-                launch(text=str(data["text"])[:4000], lang=data.get("lang"))
+                launch(text=str(data["text"])[:4000], lang=data.get("lang"),
+                       flow_control=data.get("audio_flow") is True)
+            elif kind == "audio_consumed":
+                key = (data.get("generation"), data.get("audio_id"))
+                if key[0] == transport.generation and key in windows:
+                    windows[key].acknowledge(data.get("samples"))
+            elif kind == "playback_error":
+                key = (data.get("generation"), data.get("audio_id"))
+                if key[0] == transport.generation and key in playback:
+                    raise RuntimeError("Client playback failed")
             elif kind == "playback_started":
                 key = (data.get("generation"), data.get("audio_id"))
                 if (key in playback and key[0] == transport.generation
@@ -836,9 +866,13 @@ async def ws(sock: WebSocket) -> None:
             elif kind == "playback_done":
                 key = (data.get("generation"), data.get("audio_id"))
                 future = playback.get(key)
+                window = windows.get(key)
+                if window is not None and (not window.final or window.consumed != window.sent):
+                    continue
                 if future is not None and not future.done() and key[0] == transport.generation:
                     RECORDER.event(record, {"kind": "playback_done",
-                        "generation": key[0], "audio_id": key[1]})
+                        "generation": key[0], "audio_id": key[1],
+                        "underrun_ms": milliseconds(data.get("underrun_ms"))})
                     future.set_result(None)
             elif kind == "discard_utterance":
                 utterance.clear()

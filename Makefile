@@ -28,7 +28,7 @@ test:
 
 .PHONY: test-ui
 test-ui:              ## audio protocol and console socket tests (Node.js required)
-	node --test tests/realtime-audio.test.cjs
+	node --test tests/realtime-audio.test.cjs tests/worklet.test.cjs
 
 eval:                 ## replay every recorded call through the engine (keyword layer)
 	$(PY) scripts/eval.py

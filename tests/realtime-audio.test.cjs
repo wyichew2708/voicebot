@@ -157,3 +157,30 @@ test('console falls back to scheduling when device timestamp lookup throws', () 
   assert.equal(sent.at(-1).method,'webaudio_schedule_estimate');
   assert.equal(sent.at(-1).first_audio_ms,100);
 });
+
+test('console worklet wiring waits for consumption and done, not audio_end', async () => {
+  const {context:c,sent,event} = consoleHarness();
+  const posted=[];
+  c.AudioWorkletNode=class {
+    constructor(ctx){this.context=ctx;this.port={postMessage:m=>posted.push(m)};}
+    connect(){}
+  };
+  const playbackCode=html.slice(html.indexOf('  var actx = null, playHead'),
+                               html.indexOf('  // The visible player is still handed'));
+  vm.runInContext(playbackCode,c);
+  c.actx={state:'running',audioWorklet:{addModule:async()=>{}},destination:{}};
+  assert.equal(await c.ensureWorklet(c.actx),true);
+  c.send({type:'start'});
+  assert.equal(sent.at(-1).audio_flow,true);
+  event({...begin(1),kind:'audio_begin',sample_rate:16000,flow_control:true});
+  c.ws.onmessage({data:frame()});
+  assert.equal(posted.at(-1).type,'pcm');
+  event({...begin(1),kind:'audio_end'});
+  assert.equal(posted.at(-1).type,'end');
+  assert.equal(sent.some(m=>m.type==='playback_done'),false);
+  c.workletPlayback.port.onmessage({data:{type:'consumed',id:'4:7',samples:2}});
+  assert.equal(sent.at(-1).type,'audio_consumed');
+  c.workletPlayback.port.onmessage({data:{type:'done',id:'4:7',underrun_ms:12}});
+  assert.equal(sent.at(-1).type,'playback_done');
+  assert.equal(sent.at(-1).underrun_ms,12);
+});

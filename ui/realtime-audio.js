@@ -49,7 +49,9 @@
       const a = this.active;
       if (!a || !a.final || a.turn !== this.turn) return null;
       this.active = null;
-      return { type: "playback_done", generation: a.generation, audio_id: a.audio_id };
+      const result = { type: "playback_done", generation: a.generation, audio_id: a.audio_id };
+      if (Number.isFinite(a.underrun_ms)) result.underrun_ms = a.underrun_ms;
+      return result;
     }
   }
   if (typeof module !== "undefined" && module.exports) module.exports = VoiceAudioProtocol;

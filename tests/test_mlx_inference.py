@@ -109,3 +109,36 @@ def test_failed_voice_never_loads_or_changes_speaker_on_a_miss(monkeypatch, tmp_
             asyncio.run(be.speak('new name','en',True,'male'))
     finally:
         be.close()
+
+
+def test_kokoro_forwards_a_generated_segment_before_the_model_finishes(monkeypatch, tmp_path):
+    import numpy as np
+    cfg = config(tmp_path)
+    cfg['tts'] = {'model':'Kokoro-82M','prerender':{'cache_dir':str(tmp_path)}}
+    be = MLXBackend(cfg)
+    release = threading.Event()
+    finished = threading.Event()
+    class Model:
+        def generate(self, **kwargs):
+            yield types.SimpleNamespace(audio=np.ones(320,dtype=np.float32)*.1, sample_rate=16000)
+            assert release.wait(3)
+            yield types.SimpleNamespace(audio=np.ones(320,dtype=np.float32)*.2, sample_rate=16000)
+            finished.set()
+    be._tts = Model()
+    monkeypatch.setitem(sys.modules, 'mlx_audio.resample',
+                        types.SimpleNamespace(resample_audio_array=lambda a,*args:a))
+    async def run():
+        stream=be.stream_speak('First sentence. Then the answer continues.', 'en')
+        try:
+            first=await asyncio.wait_for(anext(stream),1)
+            assert len(first.pcm)==640 and not first.final
+            assert not finished.is_set()
+            release.set()
+            rest=[c async for c in stream]
+            assert rest[-1].final and finished.is_set()
+        finally:
+            release.set(); await stream.aclose()
+    try:
+        asyncio.run(run())
+    finally:
+        release.set(); be.close()

@@ -14,7 +14,8 @@ from typing import Any, AsyncIterator
 
 from ..telemetry import measured_worker
 from ..lang import detect as detect_lang
-from .base import Backend, BackendHealth, Completion, Speech, TranscriptResult
+from .base import Backend, BackendHealth, Completion, Speech, SpeechChunk, TranscriptResult
+from .streaming import stream_worker
 from .workers import BoundedExecutor, InferenceBusy
 
 SYSTEM_MAX_TOKENS = 220
@@ -40,6 +41,10 @@ class MLXBackend(Backend):
         self._tts: Any = None
         self._error: str = ""
         self._cached_voice = bool(cfg.get("tts", {}).get("prerender", {}).get("model"))
+        # Kokoro's generator yields completed segments incrementally. Cloning
+        # and utterance-wide pitch/rate correction retain their buffered path.
+        self.streaming_tts = (not self._cached_voice and
+                              "kokoro" in cfg.get("tts", {}).get("model", "").lower())
 
     # ------------------------------------------------------------ loading
 
@@ -284,11 +289,10 @@ class MLXBackend(Backend):
                       else {"text": text, "voice": voice, "lang_code": code,
                             "speed": speed})
 
-        def _work() -> bytes:
+        def _work():
             # Convert inside the worker: an mlx array must not cross threads.
             from mlx_audio.resample import resample_audio_array
 
-            out = bytearray()
             for seg in self._tts.generate(**gen_kwargs):
                 audio = np.asarray(getattr(seg, "audio", seg), dtype=np.float32)
                 # Kokoro emits 24 kHz. Framing that as 16 kHz plays it 1.5x
@@ -297,13 +301,37 @@ class MLXBackend(Backend):
                 if src_sr != target_sr:
                     audio = np.asarray(
                         resample_audio_array(audio, src_sr, target_sr), dtype=np.float32)
-                out += (np.clip(audio, -1.0, 1.0) * 32767).astype(np.int16).tobytes()
-            return bytes(out)
+                pcm = (np.clip(audio, -1.0, 1.0) * 32767).astype(np.int16).tobytes()
+                if len(pcm) > target_sr * 2 * 120:
+                    raise ValueError("TTS segment exceeds 120 seconds")
+                frame = int(target_sr * 0.02) * 2
+                for i in range(0, len(pcm), frame):
+                    yield pcm[i:i + frame]
 
-        pcm = await self._run(_work)
-        frame = int(target_sr * 0.02) * 2          # 20 ms of int16
-        for i in range(0, len(pcm), frame):
-            yield pcm[i:i + frame]
+        stream = stream_worker(self._pool, _work)
+        try:
+            async for chunk in stream:
+                yield chunk
+        finally:
+            await stream.aclose()
+
+    async def stream_speak(self, text, lang, voice=None):
+        if not self.streaming_tts:
+            speech = await self.speak(text, lang, True, voice)
+            yield SpeechChunk(speech.pcm, speech.sample_rate, final=True,
+                              voice_source=speech.voice_source)
+            return
+        sr = self.cfg.get("sample_rate", 16000)
+        from ..spoken import speech_chunks
+        # Kokoro splits on newlines. Reuse the existing speech-safe chunker
+        # instead of splitting numbers, emails or arbitrary character counts.
+        stream = self.synthesize("\n".join(speech_chunks(text, lang)), lang)
+        try:
+            async for chunk in stream:
+                yield SpeechChunk(chunk, sr)
+        finally:
+            await stream.aclose()
+        yield SpeechChunk(b"", sr, final=True)
 
     # ------------------------------------------------------------ health
 

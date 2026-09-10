@@ -32,6 +32,7 @@ class Operation:
     workers: list[Worker] = field(default_factory=list)
     voice_source: str | None = None
     audio_seconds: float | None = None
+    first_chunk_ms: float | None = None
 
     def snapshot(self, now):
         elapsed = ((self.finish if self.finish is not None else now) - self.start) * 1000
@@ -46,6 +47,7 @@ class Operation:
             'worker_run_ms': round(sum(runs), 3) if runs else None,
             'workers_unfinished': sum(w.finished is None for w in self.workers),
             'voice_source': self.voice_source, 'audio_seconds': self.audio_seconds,
+            'first_chunk_ms': self.first_chunk_ms,
             'tts_service_rtf': (round(elapsed / 1000 / self.audio_seconds, 4)
                 if self.stage == 'tts' and self.status == 'completed'
                 and self.voice_source in ('rendered', 'live') and self.audio_seconds else None),
@@ -169,3 +171,26 @@ class MeasuredBackend:
 
     async def speak(self, *args, **kwargs):
         return await self._call('tts', self.backend.speak, *args, **kwargs)
+
+    async def stream_speak(self, *args, **kwargs):
+        op = Operation('tts', self.trace.clock(), voice_source='stream', audio_seconds=0)
+        self.trace.operations.append(op)
+        token = _operation.set(op)
+        stream = self.backend.stream_speak(*args, **kwargs)
+        try:
+            async for chunk in stream:
+                if chunk.pcm and op.first_chunk_ms is None:
+                    op.first_chunk_ms = round((self.trace.clock() - op.start) * 1000, 3)
+                op.audio_seconds += len(chunk.pcm) / 2 / chunk.sample_rate
+                yield chunk
+            op.status = 'completed'
+        except (asyncio.CancelledError, GeneratorExit):
+            op.status = 'cancelled'
+            raise
+        except Exception:
+            op.status = 'error'
+            raise
+        finally:
+            await stream.aclose()
+            op.finish = self.trace.clock()
+            _operation.reset(token)

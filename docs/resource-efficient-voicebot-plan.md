@@ -13,8 +13,11 @@ Second milestone implemented: see [latency-measurement.md](latency-measurement.m
 for browser playback estimates, backend timings and repeatable reports.
 Third milestone implemented: see [predictable-inference.md](predictable-inference.md)
 for resident voice selection, worker limits, overload behavior and deployment changes.
-Hardware latency and memory still need measurement. Priority 4 (incremental
-TTS and AudioWorklet capture/playback) is next; later priorities remain planned.
+Priority 4 software implemented for the supported Mac Kokoro path and browser
+AudioWorklet: see [incremental-audio.md](incremental-audio.md). Chatterbox remains
+buffered; a streaming CUDA adapter and sustained target-device verification
+remain open. Hardware latency and memory still need measurement. Priority 5
+(VAD and endpointing) is the next independent improvement.
 
 Start with interruption correctness and measurement. Retain the current models for the first change so any improvement or regression can be attributed to the pipeline.
 
