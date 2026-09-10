@@ -381,7 +381,9 @@ def test_playback_measurement_is_recorded_once_with_server_owned_role(setup):
         task = asyncio.create_task(server.ws(sock))
         await start(sock)
         sock.input.put_nowait({'bytes': b'\x01\0' * 1000})
-        sock.put(type='utterance_end', client_turn=2, endpoint_ms=710)
+        sock.put(type='utterance_end', client_turn=2, endpoint_ms=710,
+                 endpoint_policy='balanced', speech_detector='silero-v5',
+                 endpoint_target_ms=700, endpoint_reason='silence')
         end = await sock.until('audio_end', client_turn=2)
         for value in (1500, 1):
             sock.put(type='playback_started', generation=end['generation'],
@@ -397,6 +399,10 @@ def test_playback_measurement_is_recorded_once_with_server_owned_role(setup):
         assert len(rows) == 1
         assert rows[0]['audio'][0]['client_first_audio_ms'] == 1500
         assert rows[0]['endpoint_ms'] == 710
+        assert rows[0]['endpoint_policy'] == 'balanced'
+        assert rows[0]['speech_detector'] == 'silero-v5'
+        assert rows[0]['endpoint_target_ms'] == 700
+        assert rows[0]['endpoint_reason'] == 'silence'
         assert rows[0]['profile'] == 'mock'
         assert {op['stage'] for op in rows[0]['operations']} == {'asr','tts'}
         assert rows[0]['operations'][0]['worker_queue_ms'] is None  # mock has no worker

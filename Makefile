@@ -28,7 +28,7 @@ test:
 
 .PHONY: test-ui
 test-ui:              ## audio protocol and console socket tests (Node.js required)
-	node --test tests/realtime-audio.test.cjs tests/worklet.test.cjs
+	node --test tests/realtime-audio.test.cjs tests/worklet.test.cjs tests/endpointing.test.cjs
 
 eval:                 ## replay every recorded call through the engine (keyword layer)
 	$(PY) scripts/eval.py
@@ -119,3 +119,10 @@ console-only:         ## just the console, against services already running
 name-audit:   ## render candidate spellings of a surname and build a page to listen to
 	$(PY) scripts/name_audit.py $(NAMES) $(if $(NAMES),,--from-personas)
 	@echo "open voices/audit/index.html"
+
+.PHONY: setup-vad check-vad
+setup-vad:            ## download pinned local CPU speech detector assets
+	$(PY) scripts/setup_vad.py
+
+check-vad:            ## run real VAD model and WASM on CPU (requires setup-vad and Node.js)
+	node scripts/check_vad.cjs

@@ -126,3 +126,17 @@ def test_legacy_transcripts_cannot_be_reported_as_audio_benchmarks():
     report = summarize([{'events':[{'kind':'transcript','latency_ms':9}]}])
     assert report['groups'] == []
     assert 'No response measurements found' in markdown(report)
+
+
+def test_endpoint_policies_and_detectors_are_not_mixed_in_report():
+    rows = [measured_row(speech_detector=detector, endpoint_policy=policy,
+                        endpoint_target_ms=450, endpoint_reason='silence')
+            for detector, policy in [('energy','balanced'), ('silero-v5','balanced'),
+                                     ('silero-v5','patient')]]
+    report = summarize([{'events':rows + [measured_row()]}])
+    assert len(report['groups']) == 4
+    neural = next(g for g in report['groups'] if g['speech_detector']=='silero-v5'
+                  and g['endpoint_policy']=='balanced')
+    assert neural['endpoint_target_ms'] == {'n':1,'p50':450,'p95':450}
+    assert neural['endpoint_reasons'] == {'silence':1}
+    assert 'silero-v5' in markdown(report)

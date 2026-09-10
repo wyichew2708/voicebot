@@ -32,16 +32,20 @@ def summarize(calls):
             models = tuple(sorted(row.get('models', {}).items()))
             key = (row.get('profile', 'unknown'), row.get('declared_model_state', 'unknown'),
                    row.get('input_kind', 'unknown'), row.get('cache_state', 'unknown'),
-                   row.get('language', 'unknown'), row.get('voice', 'unknown'), models)
+                   row.get('language', 'unknown'), row.get('voice', 'unknown'), models,
+                   row.get('speech_detector', 'unknown'), row.get('endpoint_policy', 'unknown'))
             groups[key].append(row)
     report = []
-    for (profile, state, input_kind, cache, language, voice, models), rows in sorted(groups.items()):
+    for (profile, state, input_kind, cache, language, voice, models, detector, policy), rows in sorted(groups.items()):
         completed = [r for r in rows if r.get('status') == 'completed']
         operations = [op for r in completed for op in r.get('operations', [])
                       if op.get('status') == 'completed']
         report.append({
             'profile': profile, 'declared_model_state': state, 'input_kind': input_kind,
             'cache_state': cache, 'language': language, 'voice': voice,
+            'speech_detector': detector, 'endpoint_policy': policy,
+            'endpoint_reasons': dict(Counter(r.get('endpoint_reason', 'unknown') for r in rows)),
+            'endpoint_target_ms': distribution(r.get('endpoint_target_ms') for r in completed),
             'models': dict(models), 'responses': len(rows),
             'statuses': dict(Counter(r.get('status', 'unknown') for r in rows)),
             'answer_first_audio_ms': distribution(first_audio(r, 'answer') for r in completed),
@@ -87,7 +91,7 @@ def markdown(report):
     for index, g in enumerate(report['groups'], 1):
         models = ', '.join(f'{k}: {v}' for k, v in g['models'].items()) or 'unknown'
         statuses = ', '.join(f'{k}: {v}' for k, v in sorted(g['statuses'].items()))
-        lines.append(f'- Group {index} — models: {models}; responses: {statuses}.')
+        lines.append(f'- Group {index} — models: {models}; detector: {g['speech_detector']}; pause policy: {g['endpoint_policy']}; responses: {statuses}.')
     lines += ['', f"Calls without measurements: {report['legacy_calls_without_measurements']}", '']
     for note in report['notes']:
         lines.append('- ' + note)

@@ -540,6 +540,11 @@
 speech. Each setting is a multiple of the measured room level."></div>
         </div>
         <div class="field">
+          <label class="fieldlab" for="endpointMode">Pause tolerance</label>
+          <select id="endpointMode"><option value="balanced">Balanced</option><option value="patient">Long pauses</option></select>
+          <span id="vadStatus" class="fieldlab">Speech detector: waiting for microphone</span>
+        </div>
+        <div class="field">
           <span class="fieldlab">Register</span>
           <div class="seg" role="group" aria-label="Register">
             <button id="rgStandard" aria-pressed="true">STANDARD</button>
@@ -704,6 +709,8 @@ speech. Each setting is a multiple of the measured room level."></div>
 </div>
 
 <script src="realtime-audio.js"></script>
+<script src="endpointing.js"></script>
+<script src="neural-vad.js"></script>
 <script>
 (function () {
   "use strict";
@@ -1890,7 +1897,8 @@ speech. Each setting is a multiple of the measured room level."></div>
 
   // ------------------------------------------------------------------ mic
 
-  var SR = 16000, SILENCE_MS = 700, PREROLL = 44;
+  var SR = 16000, PREROLL = 44;
+  var endpointer = new VoiceEndpointing(), vadDetector = null;
   // Fixed thresholds assume a quiet room. In a noisy one the floor sits above
   // them, every rustle counts as speech, and the recogniser invents sentences
   // over it. Calibrate against the actual room instead.
@@ -1950,7 +1958,7 @@ speech. Each setting is a multiple of the measured room level."></div>
   })();
 
   var actx = null, micStream = null, micNode = null, micSrc = null;
-  var micOn = false, micEpoch = 0, talking = false, lastVoice = 0, lastVoiceMono = null, preroll = [];
+  var micOn = false, micStarting = false, micEpoch = 0, talking = false, lastVoiceMono = null, preroll = [];
   var floor = 0.006, calibN = 0, voicedMs = 0, armedMs = 0;
 
   function downsample(buf, rate) {
@@ -1971,10 +1979,12 @@ speech. Each setting is a multiple of the measured room level."></div>
     }
     return o.buffer;
   }
-  function onFrame(f32, rate, capturedAt) {
+  function onFrame(f32, rate, capturedAt, probability) {
     var mono = downsample(f32, rate), sum = 0;
     for (var i = 0; i < mono.length; i++) sum += mono[i] * mono[i];
-    var rms = Math.sqrt(sum / mono.length), now = Date.now();
+    if (!mono.length) return;
+    var rms = Math.sqrt(sum / mono.length);
+    var neural = Number.isFinite(probability) && probability >= 0 && probability <= 1;
     var frameMs = (mono.length / SR) * 1000;
 
     // Track the quiet floor while nobody is talking, so the threshold follows
@@ -1995,7 +2005,7 @@ speech. Each setting is a multiple of the measured room level."></div>
     // were being averaged into the floor — the softer they spoke the higher
     // the bar went. Rise slowly, fall quickly: a room that gets noisier can
     // wait, a room that goes quiet should be believed at once.
-    if (!talking && !agentSpeaking && rms < onThreshold) {
+    if (!talking && !agentSpeaking && rms < onThreshold && (!neural || probability < 0.25)) {
       floor = calibN < 25 ? (floor * calibN + rms) / (calibN + 1)
             : rms < floor ? floor * 0.94 + rms * 0.06
                           : floor * 0.997 + rms * 0.003;
@@ -2007,13 +2017,16 @@ speech. Each setting is a multiple of the measured room level."></div>
       // One loud frame while the agent talks is a cough, a keyboard, or our
       // own audio leaking past the echo canceller. Acting on it killed the
       // line mid-sentence for no reason the caller could see.
-      armedMs = rms > onThreshold ? armedMs + frameMs : 0;
-      if (armedMs > 0 && armedMs >= (agentSpeaking ? BARGE_MS : 0)) {
+      var onset = neural ? probability >= (agentSpeaking ? 0.7 : 0.6) && (!agentSpeaking || rms > onThreshold) : rms > onThreshold;
+      armedMs = onset ? armedMs + frameMs : 0;
+      if (armedMs > 0 && armedMs >= (agentSpeaking ? BARGE_MS : 40)) {
         // Read before it is cleared. Written the other way round the barge
         // dwell counted as zero, so the 260 ms it had already swallowed of
         // the caller's first word was never sent.
         var armed = armedMs;
-        talking = true; voicedMs = armed; armedMs = 0;
+        talking = true; voicedMs = Math.max(0, armed - frameMs); armedMs = 0;
+        endpointer.mode = $("endpointMode").value;
+        endpointer.reset(voicedMs);
         setOrb("hearing");
         if (agentSpeaking || responsePending) { send({ type: "barge_in" }); }
         // Send only the run-up we actually need — enough to recover the word
@@ -2024,18 +2037,23 @@ speech. Each setting is a multiple of the measured room level."></div>
         preroll.slice(-need).forEach(sendBin); preroll = [];
       }
     }
-    if (rms > offThreshold) { lastVoice = now; lastVoiceMono = Number.isFinite(capturedAt) ? capturedAt : performance.now(); if (talking) voicedMs += frameMs; }
+    var voice = neural ? probability >= 0.35 : rms > offThreshold;
+    if (voice) { lastVoiceMono = Number.isFinite(capturedAt) ? capturedAt : performance.now(); if (talking) voicedMs += frameMs; }
 
     var buf = pcm16(mono);
     if (talking) {
       if (!sendBin(buf)) return;
-      if (now - lastVoice > SILENCE_MS) {
+      endpointer.observe(voice, frameMs, rms / floor, neural ? probability : null);
+      var reason = endpointer.decision();
+      if (reason) {
         talking = false;
         setOrb(micOn ? "on" : "muted");
         if (voicedMs >= MIN_VOICED_MS) {
           // The endpointer's wait is part of what the caller experiences as
           // the pause before the reply, so the server counts it.
-          send({ type: "utterance_end", trailing_ms: SILENCE_MS, speech_end_ms: lastVoiceMono });
+          send({ type: "utterance_end", trailing_ms: endpointer.silence, speech_end_ms: lastVoiceMono,
+            endpoint_target_ms: endpointer.target(), endpoint_reason: reason,
+            endpoint_policy: endpointer.mode, speech_detector: neural ? "silero-v5" : "energy" });
           setWorking(true);
         } else {
           // A blip, not a turn. Sending it invites the recogniser to invent
@@ -2046,15 +2064,25 @@ speech. Each setting is a multiple of the measured room level."></div>
       }
     } else { preroll.push(buf); if (preroll.length > PREROLL) preroll.shift(); }
   }
+  function preparingMic() {
+    micStarting = true;
+    setOrb("starting");
+    $("vadStatus").textContent = "Preparing microphone and speech detector…";
+  }
   async function micStart() {
+    if (micOn || micStarting) return;
     var epoch = ++micEpoch;
     if (!live) { addSys("Microphone needs the local server.", false);
                  setOrb(running ? "muted" : "idle"); return; }
+    preparingMic();
     try {
       var acquiredStream = await navigator.mediaDevices.getUserMedia({
         audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true,
                  autoGainControl: true } });
-    } catch (e) { addSys("Microphone permission denied — typing still works.", false);
+    } catch (e) { if (epoch !== micEpoch) return;
+                  micStarting = false;
+                  $("vadStatus").textContent = "Microphone unavailable";
+                  addSys("Microphone permission denied — typing still works.", false);
                   setOrb(running ? "muted" : "idle"); return; }
     if (epoch !== micEpoch) { acquiredStream.getTracks().forEach(t => t.stop()); return; }
     micStream = acquiredStream;
@@ -2063,6 +2091,21 @@ speech. Each setting is a multiple of the measured room level."></div>
     try { await ctx.resume(); } catch (e) {}
     var available = await ensureWorklet(ctx);
     if (epoch !== micEpoch) return;
+    var detector = await NeuralVoiceDetector.create(function (pcm, at, probability) {
+      if (epoch === micEpoch && micOn) onFrame(pcm, SR, at, probability);
+    }, function () {
+      if (epoch !== micEpoch) return;
+      vadDetector = null;
+      // Inference lost continuity. Discard this turn instead of splicing audio.
+      talking = false; preroll = []; armedMs = 0; voicedMs = 0; endpointer.reset();
+      send({type:"discard_utterance"});
+      setOrb("on");
+      $("vadStatus").textContent = "Speech detector: energy fallback";
+      addSys("Speech detector fell behind. Please repeat your last reply; microphone remains on.", false);
+    });
+    if (epoch !== micEpoch) { if (detector) detector.close(); return; }
+    vadDetector = detector;
+    $("vadStatus").textContent = detector ? "Speech detector: neural (local CPU)" : "Speech detector: energy fallback";
     micSrc = ctx.createMediaStreamSource(micStream);
     var rate = ctx.sampleRate;
     if (available) {
@@ -2074,18 +2117,25 @@ speech. Each setting is a multiple of the measured room level."></div>
         var m = event.data;
         if (m.type === "capture_error") { micStop(); send({type:"discard_utterance"}); addSys(m.reason, false); return; }
         if (m.type === "capture") {
-          if (micOn) onFrame(m.pcm, SR, performance.now() - Math.max(0, ctx.currentTime - m.context_time) * 1000);
+          if (micOn) {
+            var at = performance.now() - Math.max(0, ctx.currentTime - m.context_time) * 1000;
+            if (vadDetector) vadDetector.push(m.pcm, at); else onFrame(m.pcm, SR, at);
+          }
           node.port.postMessage({type:"ack"});
         }
       };
       node.onprocessorerror = function () { micStop(); send({type:"discard_utterance"}); addSys("Microphone processor stopped.", false); };
     } else {
       micNode = ctx.createScriptProcessor(1024, 1, 1);
-      micNode.onaudioprocess = function (e) { if (micOn) onFrame(e.inputBuffer.getChannelData(0), rate); };
+      micNode.onaudioprocess = function (e) {
+        if (!micOn) return;
+        var pcm = downsample(e.inputBuffer.getChannelData(0), rate), at = performance.now();
+        if (vadDetector) vadDetector.push(pcm, at); else onFrame(pcm, SR, at);
+      };
       addSys("Using compatibility microphone capture.", true);
     }
     micSrc.connect(micNode); micNode.connect(ctx.destination);
-    micOn = true;
+    micOn = true; micStarting = false;
     setOrb("on");
     } catch (e) {
       micStop();
@@ -2094,7 +2144,10 @@ speech. Each setting is a multiple of the measured room level."></div>
   }
   function micStop() {
     micEpoch++;
-    micOn = false; talking = false; preroll = []; armedMs = 0;
+    micOn = false; micStarting = false; talking = false; preroll = []; armedMs = 0; voicedMs = 0;
+    if (vadDetector) { vadDetector.close(); vadDetector = null; }
+    endpointer.reset(); lastVoiceMono = null;
+    $("vadStatus").textContent = "Speech detector: microphone off";
     if (micNode) { if (micNode.port) micNode.port.postMessage({type:"stop"}); micNode.disconnect(); micNode.onaudioprocess = null; micNode = null; }
     if (micSrc) { micSrc.disconnect(); micSrc = null; }
     if (micStream) { micStream.getTracks().forEach(function (t) { t.stop(); }); micStream = null; }
@@ -2114,6 +2167,10 @@ speech. Each setting is a multiple of the measured room level."></div>
     if (state === "idle") {
       $("orbLabel").textContent = "Start call";
       orb.setAttribute("aria-label", "Start call");
+      orb.setAttribute("aria-pressed", "false");
+    } else if (state === "starting") {
+      $("orbLabel").textContent = "Preparing microphone — tap to cancel";
+      orb.setAttribute("aria-label", "Cancel microphone startup");
       orb.setAttribute("aria-pressed", "false");
     } else if (state === "muted") {
       orb.classList.add("muted");
@@ -2135,7 +2192,7 @@ speech. Each setting is a multiple of the measured room level."></div>
 
   $("orb").addEventListener("click", function () {
     if (!running) { beginCall(false); micStart(); return; }
-    micOn ? micStop() : micStart();
+    (micOn || micStarting) ? micStop() : micStart();
   });
   $("btnEnd").addEventListener("click", function () {
     if (running) { send({ type: "hangup" }); stop(false); }

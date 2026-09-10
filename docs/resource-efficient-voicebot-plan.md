@@ -17,7 +17,10 @@ Priority 4 software implemented for the supported Mac Kokoro path and browser
 AudioWorklet: see [incremental-audio.md](incremental-audio.md). Chatterbox remains
 buffered; a streaming CUDA adapter and sustained target-device verification
 remain open. Hardware latency and memory still need measurement. Priority 5
-(VAD and endpointing) is the next independent improvement.
+software is implemented: see [adaptive-endpointing.md](adaptive-endpointing.md)
+for local CPU neural VAD, adaptive pauses and fallback behavior. Held-out audio
+and target-device validation remain open. Priority 6 (compact-model routing
+and prompt correction) is the next independent improvement.
 
 Start with interruption correctness and measurement. Retain the current models for the first change so any improvement or regression can be attributed to the pipeline.
 

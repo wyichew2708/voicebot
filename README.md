@@ -11,6 +11,12 @@ make setup     # venv + app, no models
 make run       # console at http://127.0.0.1:8788
 ```
 
+For local CPU neural speech detection, run `make setup-vad` once before starting
+the server. `make check-vad` verifies the installed model with Node.js. The
+console uses energy detection if assets are unavailable. See
+[adaptive pauses and speech detection](docs/adaptive-endpointing.md) for setup,
+pause controls, fallback behavior and the remaining hardware validation gate.
+
 ## Deployed locally
 
 The console runs as a **launchd user agent** — it starts at login, restarts if it crashes, and

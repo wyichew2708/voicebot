@@ -142,6 +142,39 @@ async def voice_worklet_script() -> FileResponse:
                         headers={"Cache-Control": "no-store"})
 
 
+@app.get("/audio-assets/{name}")
+async def audio_asset(name: str):
+    if name not in {"endpointing.js", "neural-vad.js", "vad-worker.js"}:
+        return Response(status_code=404)
+    return FileResponse(UI.parent / name, media_type="application/javascript",
+                        headers={"Cache-Control":"no-store"})
+
+
+# Relative script URLs also keep the standalone file:// demo usable.
+@app.get("/endpointing.js")
+async def endpointing_script():
+    return await audio_asset("endpointing.js")
+
+
+@app.get("/neural-vad.js")
+async def neural_vad_script():
+    return await audio_asset("neural-vad.js")
+
+
+@app.get("/vad-assets/{name}")
+async def vad_asset(name: str):
+    types = {"manifest.json":"application/json", "ort.wasm.min.js":"application/javascript",
+             "ort-wasm-simd-threaded.mjs":"application/javascript",
+             "ort-wasm-simd-threaded.wasm":"application/wasm",
+             "silero_vad_v5.onnx":"application/octet-stream"}
+    root = UI.parent.parent / "models" / "vad"
+    if name not in types or not (root / name).is_file():
+        return Response(status_code=404)
+    if name == "manifest.json" and any(not (root / file).is_file() for file in types):
+        return Response(status_code=404)
+    return FileResponse(root / name, media_type=types[name])
+
+
 def _prerender_cfg() -> dict:
     return (_state.get("cfg", {}).get("backend", {})
             .get("tts", {}).get("prerender", {}) or {})
@@ -739,7 +772,11 @@ async def ws(sock: WebSocket) -> None:
         if active_trace is not None:
             active_trace.finish(status)
 
-    def launch(*, input_kind="typed", endpoint_ms=None, **kwargs):
+    def choice(value, options):
+        return value if value in options else "unknown"
+
+    def launch(*, input_kind="typed", endpoint_ms=None, endpoint_policy="unknown",
+               speech_detector="unknown", endpoint_target_ms=None, endpoint_reason="unknown", **kwargs):
         nonlocal active_trace
         finish_trace("interrupted")
         current, call = session, record
@@ -757,6 +794,8 @@ async def ws(sock: WebSocket) -> None:
             "session_id": call.id, "client_turn": request_turn,
             "profile": cfg.get("profile", "unknown"), "input_kind": input_kind,
             "declared_model_state": condition, "endpoint_ms": endpoint_ms,
+            "endpoint_policy": endpoint_policy, "speech_detector": speech_detector,
+            "endpoint_target_ms": endpoint_target_ms, "endpoint_reason": endpoint_reason,
             "language": current.lang, "voice": current.voice or "default",
             "models": models,
         }, lambda payload: RECORDER.event(call, payload))
@@ -832,7 +871,11 @@ async def ws(sock: WebSocket) -> None:
                 trailing = min(5000, max(0, float(data.get("trailing_ms") or 0))) / 1000
                 launch(pcm=pcm, started_at=time.perf_counter() - trailing,
                        flow_control=data.get("audio_flow") is True,
-                       input_kind="microphone", endpoint_ms=milliseconds(data.get("endpoint_ms")))
+                       input_kind="microphone", endpoint_ms=milliseconds(data.get("endpoint_ms")),
+                       endpoint_policy=choice(data.get("endpoint_policy"), ("balanced", "patient")),
+                       speech_detector=choice(data.get("speech_detector"), ("silero-v5", "energy")),
+                       endpoint_target_ms=milliseconds(data.get("endpoint_target_ms")),
+                       endpoint_reason=choice(data.get("endpoint_reason"), ("silence", "limit")))
             elif kind == "say" and session is not None:
                 utterance.clear()
                 overflow = False
