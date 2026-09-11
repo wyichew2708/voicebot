@@ -1650,7 +1650,9 @@ class CallSession:
         # line covers it, and the model is already running underneath.
         pending = self._spawn(
             router.route(self.backend, text, self.turn, self.lang,
-                         timeout_ms=self.guardrail_timeout_ms))
+                         timeout_ms=self.guardrail_timeout_ms,
+                         pending=self._pending or held,
+                         identity_verified=self.gates.as_dict().get("identity") == "pass"))
         async for ev in self._generated(THINKING[self.lang], response_role="acknowledgement"):
             yield ev
         got = await pending
