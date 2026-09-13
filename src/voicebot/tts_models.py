@@ -23,6 +23,12 @@ Three labs, one per platform:
 from __future__ import annotations
 
 import asyncio
+# Both submodules by name. `import importlib.util` does not bind
+# `importlib.metadata`, and the attribute only resolves when something else in
+# the process has imported it — which fastapi does, so the console's model
+# picker worked while `make tts-models` and `make tts-say` died on
+# `module 'importlib' has no attribute 'metadata'`.
+import importlib.metadata
 import importlib.util
 import logging
 import os

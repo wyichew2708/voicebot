@@ -356,3 +356,28 @@ def test_say_returns_audio_with_the_model_and_latency_in_headers(client):
     assert r.status_code == 200 and r.headers["X-Model"] == "shipped"
     assert client.post("/api/tts/say", json={"text": "  "}).status_code == 400
     assert client.post("/api/tts/say", json={"text": "Hi", "model": "nope"}).status_code == 404
+
+
+def test_the_registry_can_be_read_without_fastapi_in_the_process():
+    """`import importlib.util` does not bind `importlib.metadata`; the
+    attribute only resolves once something else in the process has imported
+    it. fastapi does, so the console's picker worked and `make tts-models`
+    and `make tts-say` died on "module 'importlib' has no attribute
+    'metadata'" — a failure that could not be reproduced from the server.
+
+    Run in a bare interpreter, which is the condition the CLI actually has.
+    """
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    got = subprocess.run(
+        [sys.executable, "-c",
+         "import sys; sys.path.insert(0, 'src');"
+         "from voicebot.tts_models import SidecarLab, ModelSpec;"
+         "import voicebot.tts_models as m;"
+         "print(m.importlib.metadata.__name__)"],
+        cwd=root, capture_output=True, text=True)
+    assert got.returncode == 0, got.stderr
+    assert "importlib.metadata" in got.stdout
