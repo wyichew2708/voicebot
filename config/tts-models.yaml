@@ -43,6 +43,16 @@ models:
     mlx: {repo: mlx-community/chatterbox-turbo-8bit}
     gpu: {engine: chatterbox-turbo}
 
+  chatterbox-nano:
+    label: "Chatterbox Nano"
+    note: "MIT · English only · the smallest of the family"
+    languages: [en]
+    clone: true
+    # No mlx entry: the Nano weights have no MLX build, and the `nano` switch
+    # is on the chatterbox repository's main branch rather than the released
+    # wheel — `make tts-deps TTS_ENGINE=chatterbox-nano` says so.
+    gpu: {engine: chatterbox-nano}
+
   indextts2:
     label: "IndexTTS-2"
     note: "bilibili licence · zh/en · 1.7B, expressive"
@@ -89,3 +99,15 @@ models:
     languages: []            # empty: no fixed list
     clone: true
     gpu: {engine: fish}
+
+  fish-server:
+    label: "Fish Speech S2-Pro (api_server)"
+    note: "the same weights over HTTP — fish-speech's own SGLang server · experiments only"
+    languages: []            # empty: no fixed list
+    clone: true
+    # The sidecar could serve this engine and nothing could select it: a
+    # registry entry is what puts a model in the console picker, `make
+    # tts-say` and the benchmark. Listed separately from `fish` because the
+    # two are different deployments to measure against each other — in-process
+    # against the project's recommended serving path — not one model twice.
+    gpu: {engine: fish-server}

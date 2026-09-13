@@ -381,3 +381,51 @@ def test_the_registry_can_be_read_without_fastapi_in_the_process():
         cwd=root, capture_output=True, text=True)
     assert got.returncode == 0, got.stderr
     assert "importlib.metadata" in got.stdout
+
+
+def test_every_sidecar_engine_is_selectable_and_every_entry_has_an_engine():
+    """The two halves drift apart silently and in both directions.
+
+    An engine the sidecar serves with no registry entry cannot be chosen from
+    the console, `make tts-say` or the benchmark — it is installed, running,
+    and unreachable. That is how `fish-server` and `chatterbox-nano` sat
+    unusable. A registry entry naming an engine the sidecar does not have
+    fails the other way: the model is offered, chosen, and the request 404s
+    at the sidecar.
+    """
+    import importlib.util
+    from pathlib import Path
+
+    import yaml
+
+    root = Path(__file__).resolve().parents[1]
+    spec = importlib.util.spec_from_file_location(
+        "tts_sidecar_parity", root / "scripts/tts_sidecar.py")
+    sidecar = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(sidecar)
+
+    registry = yaml.safe_load((root / "config/tts-models.yaml").read_text())["models"]
+    declared = {(s.get("gpu") or {}).get("engine") for s in registry.values()}
+    declared.discard(None)
+    served = set(sidecar.ENGINES)
+
+    assert not served - declared, (
+        f"sidecar engines nothing can select: {sorted(served - declared)} — "
+        f"add them to config/tts-models.yaml")
+    assert not declared - served, (
+        f"registry names engines the sidecar cannot serve: {sorted(declared - served)}")
+
+
+def test_a_model_with_no_mlx_build_says_how_to_reach_it():
+    """"not runnable" with no reason is the failure this codebase refuses.
+    Fish and Nano are GPU-only, and the listing has to say what to run."""
+    from voicebot import config
+    from voicebot.tts_models import SidecarLab
+
+    lab = SidecarLab(config.load("mac-polyglot")["backend"]["tts"], 16000)
+    rows = {m["id"]: m for m in lab.models()}
+    for mid in ("fish", "fish-server", "chatterbox-nano"):
+        assert mid in rows, f"{mid} is not offered at all"
+        if not rows[mid]["available"]:
+            assert rows[mid]["reason"], f"{mid} is unavailable and does not say why"
+            assert "sidecar" in rows[mid]["reason"], rows[mid]["reason"]
